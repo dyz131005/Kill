@@ -1,0 +1,71 @@
+# =====================================================
+# Kill 启动器 .gitignore
+# =====================================================
+
+# ---------- 用户明确要求忽略 ----------
+# 1. 统计行数脚本
+count_simple.ps1
+
+# 2. HMCL 源码参考（不进本项目仓库）
+hmcl-reference/
+
+# 3. CMake 构建目录
+build/
+
+# ---------- 构建产物与部署目录 ----------
+dist/
+*.exe
+!fabric-installer.jar
+!forge-installer.jar
+
+# ---------- CMake 生成的零散文件（除了 build/ 下的，防漏网） ----------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+*.autosave
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+.idea/
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# ---------- 编译中间文件 ----------
+*.obj
+*.o
+*.a
+*.so
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.res
+
+# ---------- 临时文件 & 日志 ----------
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# ---------- Windows 系统垃圾 ----------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------- macOS 系统垃圾（防跨平台） ----------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
