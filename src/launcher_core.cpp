@@ -1332,21 +1332,105 @@ QStringList LauncherCore::discoverJavaExecutables() const
     return candidates;
 }
 
+namespace {
+
+constexpr const char *kMicrosoftDefaultClientId = "c4502edb-87c6-40cb-b595-64a280cf8906";
+constexpr const char *kMicrosoftScope = "XboxLive.signin offline_access";
+constexpr const char *kMicrosoftDefaultRedirect = "https://login.live.com/oauth20_desktop.srf";
+constexpr const char *kMicrosoftLiveAuthorizeUrl = "https://login.live.com/oauth20_authorize.srf";
+constexpr const char *kMicrosoftLiveTokenUrl = "https://login.live.com/oauth20_token.srf";
+constexpr const char *kMicrosoftDeviceCodeUrl = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
+constexpr const char *kMicrosoftConsumersTokenUrl = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+
+constexpr const char *kXboxLiveAuthenticateUrl = "https://user.auth.xboxlive.com/user/authenticate";
+constexpr const char *kXboxXstsAuthorizeUrl = "https://xsts.auth.xboxlive.com/xsts/authorize";
+constexpr const char *kMinecraftLoginXboxUrl = "https://api.minecraftservices.com/authentication/login_with_xbox";
+constexpr const char *kMinecraftEntitlementUrl = "https://api.minecraftservices.com/entitlements/mcstore";
+constexpr const char *kMinecraftLicenseUrl = "https://api.minecraftservices.com/entitlements/license";
+constexpr const char *kMinecraftProfileUrl = "https://api.minecraftservices.com/minecraft/profile";
+
+QString randomBase64Url(int byteCount)
+{
+    QByteArray bytes(byteCount, Qt::Uninitialized);
+    QRandomGenerator *gen = QRandomGenerator::system();
+    for (int i = 0; i < byteCount; ++i) {
+        bytes[i] = static_cast<char>(gen->bounded(256));
+    }
+    QByteArray b64 = bytes.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+    return QString::fromLatin1(b64);
+}
+
+QString sha256Base64Url(const QString &asciiInput)
+{
+    const QByteArray bytes = asciiInput.toLatin1();
+    const QByteArray hash = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    return QString::fromLatin1(hash.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+}
+
+qint64 currentUtcSec()
+{
+    return QDateTime::currentSecsSinceEpoch();
+}
+
+} // namespace
+
+QString LauncherCore::effectiveMicrosoftClientId() const
+{
+    const QString configured = m_configStore.config().microsoftClientId.trimmed();
+    if (!configured.isEmpty()) {
+        return configured;
+    }
+    return QString::fromLatin1(kMicrosoftDefaultClientId);
+}
+
+QString LauncherCore::microsoftDefaultRedirectUri() const
+{
+    return QString::fromLatin1(kMicrosoftDefaultRedirect);
+}
+
+QString LauncherCore::microsoftOAuthScope() const
+{
+    return QString::fromLatin1(kMicrosoftScope);
+}
+
 QString LauncherCore::buildMicrosoftAuthUrl() const
 {
-    const QString clientId = m_configStore.config().microsoftClientId;
-    if (clientId.isEmpty()) {
-        return {};
-    }
+    const QString clientId = effectiveMicrosoftClientId();
+    const QString redirect = microsoftDefaultRedirectUri();
 
-    QUrl url("https://login.live.com/oauth20_authorize.srf");
+    QUrl url(QString::fromLatin1(kMicrosoftLiveAuthorizeUrl));
     QUrlQuery query;
     query.addQueryItem("client_id", clientId);
     query.addQueryItem("response_type", "code");
-    query.addQueryItem("redirect_uri", "https://login.live.com/oauth20_desktop.srf");
-    query.addQueryItem("scope", "XboxLive.signin offline_access");
+    query.addQueryItem("redirect_uri", redirect);
+    query.addQueryItem("scope", microsoftOAuthScope());
+    query.addQueryItem("prompt", "select_account");
     url.setQuery(query);
     return url.toString();
+}
+
+LauncherCore::MicrosoftPkceAuth LauncherCore::buildMicrosoftPkceAuthUrl() const
+{
+    MicrosoftPkceAuth auth;
+    auth.redirectUri = microsoftDefaultRedirectUri();
+    auth.codeVerifier = randomBase64Url(32);
+    auth.state = randomBase64Url(16);
+    const QString codeChallenge = sha256Base64Url(auth.codeVerifier);
+
+    const QString clientId = effectiveMicrosoftClientId();
+    QUrl url(QString::fromLatin1(kMicrosoftLiveAuthorizeUrl));
+    QUrlQuery query;
+    query.addQueryItem("client_id", clientId);
+    query.addQueryItem("response_type", "code");
+    query.addQueryItem("redirect_uri", auth.redirectUri);
+    query.addQueryItem("scope", microsoftOAuthScope());
+    query.addQueryItem("prompt", "select_account");
+    query.addQueryItem("code_challenge", codeChallenge);
+    query.addQueryItem("code_challenge_method", "S256");
+    query.addQueryItem("state", auth.state);
+    url.setQuery(query);
+    auth.authorizeUrl = url.toString();
+    return auth;
 }
 
 bool LauncherCore::saveConfig(QString *error)
@@ -1380,167 +1464,396 @@ bool LauncherCore::addOfflineAccount(const QString &username, QString *error)
     return saveConfig(error);
 }
 
-bool LauncherCore::loginMicrosoftWithRedirectUrl(const QString &redirectUrl, QString *error)
+QString LauncherCore::postFormSync(const QUrl &url,
+                                  const QUrlQuery &form,
+                                  QString *error,
+                                  const QList<QPair<QString, QString>> &headers,
+                                  bool ignoreHttpError,
+                                  int *outHttpCode) const
 {
-    const QString clientId = m_configStore.config().microsoftClientId;
-    if (clientId.isEmpty()) {
-        *error = "请先在设置中填写 Microsoft Client ID";
-        return false;
+    if (error) error->clear();
+    if (outHttpCode) *outHttpCode = 0;
+
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    for (const auto &h : headers) {
+        req.setRawHeader(h.first.toUtf8(), h.second.toUtf8());
     }
 
-    QString code = redirectUrl.trimmed();
-    QUrl redirect(code);
-    if (redirect.isValid() && code.contains("oauth20_desktop.srf")) {
-        QUrlQuery redirectQuery(redirect);
-        code = redirectQuery.queryItemValue("code");
-    }
-    if (code.isEmpty()) {
-        *error = "未从回调地址中解析到 code";
-        return false;
-    }
-
-    QUrl tokenUrl("https://login.live.com/oauth20_token.srf");
-    QUrlQuery tokenQuery;
-    tokenQuery.addQueryItem("client_id", clientId);
-    tokenQuery.addQueryItem("code", code);
-    tokenQuery.addQueryItem("grant_type", "authorization_code");
-    tokenQuery.addQueryItem("redirect_uri", "https://login.live.com/oauth20_desktop.srf");
-
-    QNetworkRequest request(tokenUrl);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-    QNetworkReply *reply = m_networkManager->post(request, tokenQuery.toString(QUrl::FullyEncoded).toUtf8());
+    const QByteArray body = form.toString(QUrl::FullyEncoded).toUtf8();
+    QNetworkReply *reply = m_networkManager->post(req, body);
     QEventLoop loop;
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     loop.exec();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        *error = QString("Microsoft OAuth 失败: %1").arg(reply->errorString());
-        reply->deleteLater();
-        return false;
-    }
+    const int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (outHttpCode) *outHttpCode = httpCode;
 
-    const QJsonObject tokenObject = QJsonDocument::fromJson(reply->readAll()).object();
+    const QByteArray bytes = reply->readAll();
+    const bool netError = reply->error() != QNetworkReply::NoError;
     reply->deleteLater();
-    const QString msaAccessToken = tokenObject.value("access_token").toString();
-    const QString refreshToken = tokenObject.value("refresh_token").toString();
-    if (msaAccessToken.isEmpty()) {
-        *error = "Microsoft OAuth 未返回 access_token";
-        return false;
+
+    if (netError && !ignoreHttpError) {
+        if (error) *error = QString("HTTP POST 失败: %1").arg(reply->errorString());
+        return {};
+    }
+    if (!ignoreHttpError && httpCode >= 400) {
+        if (error) *error = QString("HTTP POST 返回错误状态码 %1").arg(httpCode);
+    }
+    return QString::fromUtf8(bytes);
+}
+
+QString LauncherCore::postJsonSync(const QUrl &url,
+                                   const QJsonObject &payload,
+                                   QString *error,
+                                   const QList<QPair<QString, QString>> &headers,
+                                   bool ignoreHttpError,
+                                   int *outHttpCode) const
+{
+    if (error) error->clear();
+    if (outHttpCode) *outHttpCode = 0;
+
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    for (const auto &h : headers) {
+        req.setRawHeader(h.first.toUtf8(), h.second.toUtf8());
     }
 
-    auto postJson = [this](const QUrl &url, const QJsonObject &payload, QString *localError) -> QJsonObject {
-        QNetworkRequest req(url);
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        QNetworkReply *jsonReply = m_networkManager->post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
-        QEventLoop localLoop;
-        connect(jsonReply, &QNetworkReply::finished, &localLoop, &QEventLoop::quit);
-        localLoop.exec();
-        if (jsonReply->error() != QNetworkReply::NoError) {
-            *localError = jsonReply->errorString();
-            jsonReply->deleteLater();
-            return {};
+    const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    QNetworkReply *reply = m_networkManager->post(req, body);
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    const int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (outHttpCode) *outHttpCode = httpCode;
+
+    const QByteArray bytes = reply->readAll();
+    const bool netError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (netError && !ignoreHttpError) {
+        if (error) *error = QString("HTTP POST 失败: %1").arg(reply->errorString());
+        return {};
+    }
+    if (!ignoreHttpError && httpCode >= 400) {
+        if (error) *error = QString("HTTP POST 返回错误状态码 %1").arg(httpCode);
+    }
+    return QString::fromUtf8(bytes);
+}
+
+QString LauncherCore::describeXboxErrorCode(qint64 xErr, const QString &redirectUrl) const
+{
+    switch (xErr) {
+    case 2148916227LL:
+        return QStringLiteral("Xbox Live 账号已被封禁 (XErr=2148916227)");
+    case 2148916233LL:
+        return QStringLiteral("该 Microsoft 账号未开通 Xbox Live 账户，请先注册 Xbox Live (XErr=2148916233)");
+    case 2148916235LL:
+        return QStringLiteral("Xbox Live 在当前所在国家/地区不可用 (XErr=2148916235)");
+    case 2148916238LL:
+        if (!redirectUrl.isEmpty()) {
+            return QStringLiteral("账号为未成年账号，需要先加入家庭组。请访问: %1").arg(redirectUrl);
         }
-        const QJsonObject object = QJsonDocument::fromJson(jsonReply->readAll()).object();
-        jsonReply->deleteLater();
-        return object;
+        return QStringLiteral("账号为未成年账号，需要家长将其加入家庭组 (XErr=2148916238)");
+    default:
+        if (!redirectUrl.isEmpty()) {
+            return QStringLiteral("Xbox Live 授权失败，XErr=%1，跳转地址: %2").arg(xErr).arg(redirectUrl);
+        }
+        return QStringLiteral("Xbox Live 授权失败，XErr=%1").arg(xErr);
+    }
+}
+
+static QString extractXboxUhs(const QJsonObject &resp, bool *hasError, QString *error)
+{
+    const QJsonObject claims = resp.value("DisplayClaims").toObject();
+    const QJsonArray xui = claims.value("xui").toArray();
+    if (xui.isEmpty()) {
+        if (hasError) *hasError = true;
+        if (error) *error = QStringLiteral("Xbox 返回的 DisplayClaims/xui 为空");
+        return {};
+    }
+    const QJsonObject first = xui.first().toObject();
+    if (!first.contains("uhs")) {
+        if (hasError) *hasError = true;
+        if (error) *error = QStringLiteral("Xbox 返回的 xui 中缺少 uhs 字段");
+        return {};
+    }
+    return first.value("uhs").toString();
+}
+
+bool LauncherCore::authenticateXboxLive(const QString &liveAccessToken, MicrosoftXboxAuthResult *outXbl, QString *error) const
+{
+    const QJsonObject payload{
+        {"Properties", QJsonObject{
+            {"AuthMethod", "RPS"},
+            {"SiteName", "user.auth.xboxlive.com"},
+            {"RpsTicket", "d=" + liveAccessToken}
+        }},
+        {"RelyingParty", "http://auth.xboxlive.com"},
+        {"TokenType", "JWT"}
     };
 
-    QString localError;
-    const QJsonObject xbl = postJson(
-        QUrl("https://user.auth.xboxlive.com/user/authenticate"),
-        {
-            {"Properties", QJsonObject{
-                {"AuthMethod", "RPS"},
-                {"SiteName", "user.auth.xboxlive.com"},
-                {"RpsTicket", "d=" + msaAccessToken}
-            }},
-            {"RelyingParty", "http://auth.xboxlive.com"},
-            {"TokenType", "JWT"}
-        },
-        &localError);
-    if (!localError.isEmpty()) {
-        *error = "Xbox Live 鉴权失败: " + localError;
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postJsonSync(QUrl(QString::fromLatin1(kXboxLiveAuthenticateUrl)),
+                                     payload, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+
+    const qint64 xErr = resp.value("XErr").toVariant().toLongLong();
+    const QString redirect = resp.value("Redirect").toString();
+    if (xErr != 0) {
+        if (error) *error = describeXboxErrorCode(xErr, redirect);
+        return false;
+    }
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("Xbox Live 鉴权请求失败: %1").arg(localErr);
         return false;
     }
 
-    const QString xblToken = xbl.value("Token").toString();
-    const QJsonArray xblUsers = xbl.value("DisplayClaims").toObject().value("xui").toArray();
-    const QJsonObject xblUser = xblUsers.isEmpty() ? QJsonObject() : xblUsers.first().toObject();
-    const QString uhs = xblUser.value("uhs").toString();
-
-    const QJsonObject xsts = postJson(
-        QUrl("https://xsts.auth.xboxlive.com/xsts/authorize"),
-        {
-            {"Properties", QJsonObject{
-                {"SandboxId", "RETAIL"},
-                {"UserTokens", QJsonArray{ xblToken }}
-            }},
-            {"RelyingParty", "rp://api.minecraftservices.com/"},
-            {"TokenType", "JWT"}
-        },
-        &localError);
-    if (!localError.isEmpty()) {
-        *error = "XSTS 鉴权失败: " + localError;
+    const QString token = resp.value("Token").toString();
+    if (token.isEmpty()) {
+        if (error) *error = QStringLiteral("Xbox Live 响应缺少 Token");
         return false;
     }
 
-    const QString xstsToken = xsts.value("Token").toString();
-    const QJsonArray xstsUsers = xsts.value("DisplayClaims").toObject().value("xui").toArray();
-    const QJsonObject xstsUser = xstsUsers.isEmpty() ? QJsonObject() : xstsUsers.first().toObject();
-    const QString xuid = xstsUser.value("xid").toString();
-
-    const QJsonObject minecraftToken = postJson(
-        QUrl("https://api.minecraftservices.com/authentication/login_with_xbox"),
-        {
-            {"identityToken", QString("XBL3.0 x=%1;%2").arg(uhs, xstsToken)}
-        },
-        &localError);
-    if (!localError.isEmpty()) {
-        *error = "Minecraft 登录失败: " + localError;
+    bool uhsErr = false;
+    QString uhsErrorText;
+    const QString uhs = extractXboxUhs(resp, &uhsErr, &uhsErrorText);
+    if (uhsErr) {
+        if (error) *error = uhsErrorText;
         return false;
     }
 
-    const QString mcAccessToken = minecraftToken.value("access_token").toString();
-    if (mcAccessToken.isEmpty()) {
-        *error = "Minecraft 未返回 access_token";
+    if (outXbl) {
+        outXbl->token = token;
+        outXbl->uhs = uhs;
+        const QJsonObject first = resp.value("DisplayClaims").toObject().value("xui").toArray().first().toObject();
+        outXbl->xuid = first.value("xid").toString();
+    }
+    return true;
+}
+
+bool LauncherCore::authenticateMinecraftXsts(const QString &xblToken, MicrosoftXboxAuthResult *outXsts, const QString &expectedUhs, QString *error) const
+{
+    const QJsonObject payload{
+        {"Properties", QJsonObject{
+            {"SandboxId", "RETAIL"},
+            {"UserTokens", QJsonArray{ xblToken }}
+        }},
+        {"RelyingParty", "rp://api.minecraftservices.com/"},
+        {"TokenType", "JWT"}
+    };
+
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postJsonSync(QUrl(QString::fromLatin1(kXboxXstsAuthorizeUrl)),
+                                     payload, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+
+    const qint64 xErr = resp.value("XErr").toVariant().toLongLong();
+    const QString redirect = resp.value("Redirect").toString();
+    if (xErr != 0) {
+        if (error) *error = describeXboxErrorCode(xErr, redirect);
+        return false;
+    }
+    if (httpCode == 401) {
+        if (error) *error = QStringLiteral("XSTS 授权失败 (HTTP 401)，Xbox 凭证无效或已过期");
+        return false;
+    }
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("XSTS 授权请求失败: %1").arg(localErr);
         return false;
     }
 
-    const QByteArray entitlementBytes = getBytes(
-        QUrl("https://api.minecraftservices.com/entitlements/mcstore"),
-        &localError,
-        {{"Authorization", "Bearer " + mcAccessToken}});
-    if (!localError.isEmpty()) {
-        *error = "读取授权失败: " + localError;
-        return false;
-    }
-    const QJsonObject entitlement = QJsonDocument::fromJson(entitlementBytes).object();
-    if (entitlement.value("items").toArray().isEmpty()) {
-        *error = "账号未检测到 Minecraft Java Edition 购买授权";
+    const QString token = resp.value("Token").toString();
+    if (token.isEmpty()) {
+        if (error) *error = QStringLiteral("XSTS 响应缺少 Token");
         return false;
     }
 
-    const QByteArray profileBytes = getBytes(
-        QUrl("https://api.minecraftservices.com/minecraft/profile"),
-        &localError,
-        {{"Authorization", "Bearer " + mcAccessToken}});
-    if (!localError.isEmpty()) {
-        *error = "读取档案失败: " + localError;
+    bool uhsErr = false;
+    QString uhsErrorText;
+    const QString uhs = extractXboxUhs(resp, &uhsErr, &uhsErrorText);
+    if (uhsErr) {
+        if (error) *error = uhsErrorText;
         return false;
     }
-    const QJsonObject profile = QJsonDocument::fromJson(profileBytes).object();
+    if (!expectedUhs.isEmpty() && uhs != expectedUhs) {
+        if (error) *error = QStringLiteral("XSTS 返回的 uhs 与 XBL 返回的不一致");
+        return false;
+    }
+
+    if (outXsts) {
+        outXsts->token = token;
+        outXsts->uhs = uhs;
+        const QJsonObject first = resp.value("DisplayClaims").toObject().value("xui").toArray().first().toObject();
+        outXsts->xuid = first.value("xid").toString();
+    }
+    return true;
+}
+
+bool LauncherCore::loginMinecraftWithXbox(const QString &uhs, const QString &xstsToken, QString *outMcAccessToken, QString *outMcTokenType, int *outExpiresInSec, QString *outUsername, QString *error) const
+{
+    const QJsonObject payload{
+        {"identityToken", QString("XBL3.0 x=%1;%2").arg(uhs, xstsToken)}
+    };
+
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postJsonSync(QUrl(QString::fromLatin1(kMinecraftLoginXboxUrl)),
+                                     payload, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("Minecraft Xbox 登录请求失败: %1").arg(localErr);
+        return false;
+    }
+
+    const QString access = resp.value("access_token").toString();
+    if (access.isEmpty()) {
+        const QString errMsg = resp.value("errorMessage").toString(resp.value("error").toString());
+        if (error) {
+            if (!errMsg.isEmpty()) *error = QStringLiteral("Minecraft Xbox 登录失败: %1").arg(errMsg);
+            else *error = QStringLiteral("Minecraft Xbox 登录响应缺少 access_token");
+        }
+        return false;
+    }
+
+    if (outMcAccessToken) *outMcAccessToken = access;
+    if (outMcTokenType) *outMcTokenType = resp.value("token_type").toString("Bearer");
+    if (outExpiresInSec) *outExpiresInSec = resp.value("expires_in").toInt(3600);
+    if (outUsername) *outUsername = resp.value("username").toString();
+    return true;
+}
+
+bool LauncherCore::checkMinecraftOwnership(const QString &mcAccessToken, QString *error)
+{
+    QString localErr;
+    const QByteArray bytes = getBytes(QUrl(QString::fromLatin1(kMinecraftEntitlementUrl)),
+                                      &localErr,
+                                      {{"Authorization", "Bearer " + mcAccessToken}});
+    if (!localErr.isEmpty()) {
+        if (error) *error = QStringLiteral("读取 Minecraft 授权清单失败: %1").arg(localErr);
+        return false;
+    }
+    const QJsonObject obj = QJsonDocument::fromJson(bytes).object();
+    const QJsonArray items = obj.value("items").toArray();
+    const bool hasGame = std::any_of(items.begin(), items.end(), [](const QJsonValue &v) {
+        const QJsonObject item = v.toObject();
+        const QString name = item.value("name").toString();
+        return name == "product_minecraft" || name == "game_minecraft";
+    });
+    if (!hasGame) {
+        if (error) *error = QStringLiteral("账号未检测到 Minecraft Java Edition 购买授权（mcstore/items 为空或无游戏项）");
+        return false;
+    }
+    return true;
+}
+
+bool LauncherCore::fetchMinecraftProfile(const QString &mcTokenType, const QString &mcAccessToken, QString *outUuid, QString *outName, QString *error)
+{
+    const QString authHeader = QString("%1 %2").arg(mcTokenType.isEmpty() ? "Bearer" : mcTokenType, mcAccessToken);
+
+    QNetworkRequest req(QUrl(QString::fromLatin1(kMinecraftProfileUrl)));
+    req.setRawHeader("Authorization", authHeader.toUtf8());
+    QNetworkReply *reply = m_networkManager->get(req);
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+    const int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QByteArray bytes = reply->readAll();
+    const auto netErr = reply->error();
+    reply->deleteLater();
+
+    if (httpCode == 404) {
+        QString licErr;
+        const QByteArray licBytes = getBytes(QUrl(QString::fromLatin1(kMinecraftLicenseUrl)),
+                                             &licErr,
+                                             {{"Authorization", authHeader}});
+        bool hasLicense = false;
+        if (licErr.isEmpty()) {
+            const QJsonObject lic = QJsonDocument::fromJson(licBytes).object();
+            const QJsonArray items = lic.value("items").toArray();
+            hasLicense = std::any_of(items.begin(), items.end(), [](const QJsonValue &v) {
+                return v.toObject().value("name").toString() == "game_minecraft";
+            });
+        }
+        if (error) {
+            if (hasLicense) {
+                *error = QStringLiteral("该 Microsoft 账号已拥有 Minecraft 授权，但尚未在官方启动器中创建 Java 版玩家档案。请先用官方启动器登录一次以创建角色名。");
+            } else {
+                *error = QStringLiteral("该 Microsoft 账号没有 Minecraft Java Edition 授权，或尚未购买游戏。");
+            }
+        }
+        return false;
+    }
+    if (netErr != QNetworkReply::NoError) {
+        if (error) *error = QStringLiteral("获取 Minecraft 档案请求失败: %1").arg(netErr);
+        return false;
+    }
+    if (httpCode >= 400) {
+        if (error) *error = QStringLiteral("获取 Minecraft 档案返回错误状态码 %1").arg(httpCode);
+        return false;
+    }
+
+    const QJsonObject profile = QJsonDocument::fromJson(bytes).object();
+    const QString id = profile.value("id").toString();
+    const QString name = profile.value("name").toString();
+    if (id.isEmpty() || name.isEmpty()) {
+        const QString err = profile.value("errorMessage").toString(profile.value("error").toString());
+        if (error) {
+            if (!err.isEmpty()) *error = QStringLiteral("Minecraft 档案返回错误: %1").arg(err);
+            else *error = QStringLiteral("Minecraft 档案响应缺少 id 或 name 字段");
+        }
+        return false;
+    }
+
+    QString dashed = id;
+    if (dashed.length() == 32 && !dashed.contains('-')) {
+        dashed.insert(8, '-').insert(13, '-').insert(18, '-').insert(23, '-');
+    }
+    if (outUuid) *outUuid = dashed;
+    if (outName) *outName = name;
+    return true;
+}
+
+bool LauncherCore::saveMicrosoftAccountFromTokensInternal(const QString &liveAccessToken,
+                                                          const QString &liveRefreshToken,
+                                                          const QString &clientId,
+                                                          int msExpiresInSec,
+                                                          QString *error)
+{
+    MicrosoftXboxAuthResult xbl;
+    if (!authenticateXboxLive(liveAccessToken, &xbl, error)) return false;
+
+    MicrosoftXboxAuthResult xsts;
+    if (!authenticateMinecraftXsts(xbl.token, &xsts, xbl.uhs, error)) return false;
+
+    QString mcAccessToken, mcTokenType, mcUsername;
+    int mcExpiresInSec = 3600;
+    if (!loginMinecraftWithXbox(xsts.uhs, xsts.token, &mcAccessToken, &mcTokenType, &mcExpiresInSec, &mcUsername, error)) {
+        return false;
+    }
+
+    if (!checkMinecraftOwnership(mcAccessToken, error)) return false;
+
+    QString profileUuid, profileName;
+    if (!fetchMinecraftProfile(mcTokenType, mcAccessToken, &profileUuid, &profileName, error)) return false;
 
     Account account;
     account.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     account.type = Account::Type::Microsoft;
-    account.username = profile.value("name").toString();
-    account.uuid = profile.value("id").toString();
-    account.profileId = account.uuid;
+    account.username = profileName;
+    account.uuid = profileUuid;
+    account.profileId = profileUuid;
     account.accessToken = mcAccessToken;
-    account.refreshToken = refreshToken;
+    account.tokenType = mcTokenType;
+    account.refreshToken = liveRefreshToken;
     account.clientId = clientId;
-    account.xuid = xuid;
-    account.expiry = QDateTime::currentDateTimeUtc().addSecs(tokenObject.value("expires_in").toInt(3600));
+    account.xuid = xsts.xuid.isEmpty() ? xbl.xuid : xsts.xuid;
+    const int expirySec = msExpiresInSec > 0 ? msExpiresInSec : mcExpiresInSec;
+    account.expiry = QDateTime::currentDateTimeUtc().addSecs(expirySec);
+    account.microsoftUsername = mcUsername;
 
     LauncherConfig &config = m_configStore.config();
     config.accounts.append(account);
@@ -1548,131 +1861,343 @@ bool LauncherCore::loginMicrosoftWithRedirectUrl(const QString &redirectUrl, QSt
     return saveConfig(error);
 }
 
+bool LauncherCore::saveMicrosoftAccountFromTokens(const QString &liveAccessToken,
+                                                  const QString &liveRefreshToken,
+                                                  const QString &clientId,
+                                                  int msExpiresInSec,
+                                                  QString *error)
+{
+    return saveMicrosoftAccountFromTokensInternal(liveAccessToken, liveRefreshToken, clientId, msExpiresInSec, error);
+}
+
+bool LauncherCore::exchangeMicrosoftAuthCodeForToken(const QString &clientId,
+                                                     const QString &code,
+                                                     const QString &redirectUri,
+                                                     const QString &codeVerifier,
+                                                     QString *outAccessToken,
+                                                     QString *outRefreshToken,
+                                                     int *outExpiresInSec,
+                                                     QString *outOAuthError,
+                                                     QString *error) const
+{
+    QUrlQuery form;
+    form.addQueryItem("client_id", clientId);
+    form.addQueryItem("code", code);
+    form.addQueryItem("grant_type", "authorization_code");
+    if (!codeVerifier.isEmpty()) {
+        form.addQueryItem("code_verifier", codeVerifier);
+    }
+    form.addQueryItem("redirect_uri", redirectUri);
+    form.addQueryItem("scope", microsoftOAuthScope());
+
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postFormSync(QUrl(QString::fromLatin1(kMicrosoftLiveTokenUrl)),
+                                     form, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+
+    const QString oauthErr = resp.value("error").toString();
+    const QString oauthDesc = resp.value("error_description").toString();
+    if (!oauthErr.isEmpty()) {
+        if (outOAuthError) *outOAuthError = oauthErr;
+        if (error) {
+            if (oauthErr == "invalid_grant" && oauthDesc.contains("AADSTS70000")) {
+                *error = QStringLiteral("Microsoft OAuth 授权码已过期或无效 (invalid_grant/AADSTS70000)，请重新发起登录。");
+            } else if (!oauthDesc.isEmpty()) {
+                *error = QStringLiteral("Microsoft OAuth 错误 [%1]: %2").arg(oauthErr, oauthDesc);
+            } else {
+                *error = QStringLiteral("Microsoft OAuth 错误: %1").arg(oauthErr);
+            }
+        }
+        return false;
+    }
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("Microsoft OAuth 令牌请求失败: %1").arg(localErr);
+        return false;
+    }
+
+    const QString access = resp.value("access_token").toString();
+    const QString refresh = resp.value("refresh_token").toString();
+    if (access.isEmpty()) {
+        if (error) *error = QStringLiteral("Microsoft OAuth 响应缺少 access_token");
+        return false;
+    }
+
+    if (outAccessToken) *outAccessToken = access;
+    if (outRefreshToken) *outRefreshToken = refresh;
+    if (outExpiresInSec) *outExpiresInSec = resp.value("expires_in").toInt(3600);
+    return true;
+}
+
+bool LauncherCore::exchangeMicrosoftDeviceCodeForToken(const QString &clientId,
+                                                       const QString &deviceCode,
+                                                       QString *outAccessToken,
+                                                       QString *outRefreshToken,
+                                                       int *outExpiresInSec,
+                                                       QString *outPollError,
+                                                       QString *error) const
+{
+    QUrlQuery form;
+    form.addQueryItem("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
+    form.addQueryItem("code", deviceCode);
+    form.addQueryItem("client_id", clientId);
+
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postFormSync(QUrl(QString::fromLatin1(kMicrosoftConsumersTokenUrl)),
+                                     form, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+
+    const QString pollErr = resp.value("error").toString();
+    if (!pollErr.isEmpty()) {
+        if (outPollError) *outPollError = pollErr;
+        const QString desc = resp.value("error_description").toString();
+        if (pollErr == "authorization_pending"
+            || pollErr == "expired_token"
+            || pollErr == "slow_down"
+            || pollErr == "bad_verification_code") {
+            return false;
+        }
+        if (error) {
+            if (!desc.isEmpty()) *error = QStringLiteral("Microsoft Device Code 错误 [%1]: %2").arg(pollErr, desc);
+            else *error = QStringLiteral("Microsoft Device Code 错误: %1").arg(pollErr);
+        }
+        return false;
+    }
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("Microsoft Device Code 令牌请求失败: %1").arg(localErr);
+        return false;
+    }
+
+    const QString access = resp.value("access_token").toString();
+    if (access.isEmpty()) {
+        if (error) *error = QStringLiteral("Microsoft Device Code 响应缺少 access_token");
+        return false;
+    }
+    if (outAccessToken) *outAccessToken = access;
+    if (outRefreshToken) *outRefreshToken = resp.value("refresh_token").toString();
+    if (outExpiresInSec) *outExpiresInSec = resp.value("expires_in").toInt(3600);
+    return true;
+}
+
+bool LauncherCore::exchangeMicrosoftRefreshToken(const QString &clientId,
+                                                 const QString &oldRefreshToken,
+                                                 QString *outNewAccessToken,
+                                                 QString *outNewRefreshToken,
+                                                 int *outExpiresInSec,
+                                                 QString *outOAuthError,
+                                                 QString *error) const
+{
+    QUrlQuery form;
+    form.addQueryItem("client_id", clientId);
+    form.addQueryItem("refresh_token", oldRefreshToken);
+    form.addQueryItem("grant_type", "refresh_token");
+    form.addQueryItem("scope", microsoftOAuthScope());
+
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postFormSync(QUrl(QString::fromLatin1(kMicrosoftLiveTokenUrl)),
+                                     form, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+
+    const QString oauthErr = resp.value("error").toString();
+    const QString oauthDesc = resp.value("error_description").toString();
+    if (!oauthErr.isEmpty()) {
+        if (outOAuthError) *outOAuthError = oauthErr;
+        if (error) {
+            if (oauthErr == "invalid_grant") {
+                *error = QStringLiteral("Microsoft Refresh Token 已失效（invalid_grant），请重新登录正版账户。");
+            } else if (!oauthDesc.isEmpty()) {
+                *error = QStringLiteral("Microsoft Refresh 错误 [%1]: %2").arg(oauthErr, oauthDesc);
+            } else {
+                *error = QStringLiteral("Microsoft Refresh 错误: %1").arg(oauthErr);
+            }
+        }
+        return false;
+    }
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("Microsoft Refresh Token 请求失败: %1").arg(localErr);
+        return false;
+    }
+
+    const QString access = resp.value("access_token").toString();
+    if (access.isEmpty()) {
+        if (error) *error = QStringLiteral("Microsoft Refresh 响应缺少 access_token");
+        return false;
+    }
+
+    if (outNewAccessToken) *outNewAccessToken = access;
+    if (outNewRefreshToken) *outNewRefreshToken = resp.value("refresh_token").toString(oldRefreshToken);
+    if (outExpiresInSec) *outExpiresInSec = resp.value("expires_in").toInt(3600);
+    return true;
+}
+
+bool LauncherCore::loginMicrosoftAuthorizationCode(const QString &codeOrRedirectUrl, const QString &codeVerifier, QString *error)
+{
+    const QString clientId = effectiveMicrosoftClientId();
+    const QString redirect = microsoftDefaultRedirectUri();
+
+    QString code = codeOrRedirectUrl.trimmed();
+    const QUrl asUrl(code);
+    if (asUrl.isValid() && code.contains("oauth20_desktop.srf")) {
+        QUrlQuery q(asUrl);
+        code = q.queryItemValue("code");
+    }
+    if (code.isEmpty()) {
+        if (error) *error = QStringLiteral("未解析到授权码 code，请检查粘贴内容。");
+        return false;
+    }
+
+    QString accessToken, refreshToken, oauthErr;
+    int expiresInSec = 3600;
+    if (!exchangeMicrosoftAuthCodeForToken(clientId, code, redirect, codeVerifier,
+                                           &accessToken, &refreshToken, &expiresInSec,
+                                           &oauthErr, error)) {
+        return false;
+    }
+
+    return saveMicrosoftAccountFromTokensInternal(accessToken, refreshToken, clientId, expiresInSec, error);
+}
+
+bool LauncherCore::loginMicrosoftWithRedirectUrl(const QString &redirectUrl, QString *error)
+{
+    return loginMicrosoftAuthorizationCode(redirectUrl, QString(), error);
+}
+
+bool LauncherCore::startMicrosoftDeviceLogin(MicrosoftDeviceCode *outCode, QString *error)
+{
+    if (!outCode) {
+        if (error) *error = QStringLiteral("空输出参数");
+        return false;
+    }
+
+    const QString clientId = effectiveMicrosoftClientId();
+    QUrlQuery form;
+    form.addQueryItem("client_id", clientId);
+    form.addQueryItem("scope", microsoftOAuthScope());
+
+    int httpCode = 0;
+    QString localErr;
+    const QString raw = postFormSync(QUrl(QString::fromLatin1(kMicrosoftDeviceCodeUrl)),
+                                     form, &localErr, {}, true, &httpCode);
+    const QJsonObject resp = QJsonDocument::fromJson(raw.toUtf8()).object();
+
+    const QString oauthErr = resp.value("error").toString();
+    const QString oauthDesc = resp.value("error_description").toString();
+    if (!oauthErr.isEmpty()) {
+        if (error) {
+            if (!oauthDesc.isEmpty()) *error = QStringLiteral("Device Code 错误 [%1]: %2").arg(oauthErr, oauthDesc);
+            else *error = QStringLiteral("Device Code 错误: %1").arg(oauthErr);
+        }
+        return false;
+    }
+    if (!localErr.isEmpty() && httpCode >= 400 && resp.isEmpty()) {
+        if (error) *error = QStringLiteral("Device Code 请求失败: %1").arg(localErr);
+        return false;
+    }
+
+    const QString userCode = resp.value("user_code").toString();
+    const QString verificationUri = resp.value("verification_uri").toString();
+    const QString deviceCode = resp.value("device_code").toString();
+    if (userCode.isEmpty() || verificationUri.isEmpty() || deviceCode.isEmpty()) {
+        if (error) *error = QStringLiteral("Device Code 响应字段不完整");
+        return false;
+    }
+
+    outCode->userCode = userCode;
+    outCode->verificationUri = verificationUri;
+    outCode->deviceCode = deviceCode;
+    outCode->intervalSec = resp.value("interval").toInt(5);
+    const int expiresIn = resp.value("expires_in").toInt(900);
+    outCode->expiresAtUtcSec = currentUtcSec() + qMin(expiresIn, 900);
+    return true;
+}
+
+LauncherCore::DevicePollOutcome LauncherCore::pollMicrosoftDeviceLogin(MicrosoftDeviceCode &ioCode, QString *pollErrorOut, QString *error)
+{
+    if (pollErrorOut) pollErrorOut->clear();
+    if (error) error->clear();
+
+    if (ioCode.expiresAtUtcSec > 0 && currentUtcSec() >= ioCode.expiresAtUtcSec) {
+        return DevicePollOutcome::Expired;
+    }
+
+    const QString clientId = effectiveMicrosoftClientId();
+    QString accessToken, refreshToken, pollErr;
+    int expiresInSec = 3600;
+    const bool ok = exchangeMicrosoftDeviceCodeForToken(clientId, ioCode.deviceCode,
+                                                        &accessToken, &refreshToken, &expiresInSec,
+                                                        &pollErr, error);
+    if (!pollErr.isEmpty() && pollErrorOut) *pollErrorOut = pollErr;
+
+    if (pollErr == "authorization_pending") {
+        return DevicePollOutcome::Pending;
+    }
+    if (pollErr == "expired_token") {
+        return DevicePollOutcome::Expired;
+    }
+    if (pollErr == "slow_down") {
+        ioCode.intervalSec = qMin(60, ioCode.intervalSec + 5);
+        return DevicePollOutcome::SlowDown;
+    }
+    if (!ok) {
+        return DevicePollOutcome::Failed;
+    }
+
+    QString saveErr;
+    if (!saveMicrosoftAccountFromTokensInternal(accessToken, refreshToken, clientId, expiresInSec, &saveErr)) {
+        if (error) error->swap(saveErr);
+        return DevicePollOutcome::Failed;
+    }
+    return DevicePollOutcome::Authorized;
+}
+
 bool LauncherCore::refreshMicrosoftAccount(Account &account, QString *error)
 {
-    if (account.refreshToken.isEmpty() || account.clientId.isEmpty()) {
-        *error = "缺少 refresh token 或 client id";
+    if (account.type != Account::Type::Microsoft) {
+        return true;
+    }
+    if (account.refreshToken.isEmpty()) {
+        if (error) *error = QStringLiteral("缺少 refresh token，需重新登录");
+        return false;
+    }
+    const QString clientId = account.clientId.isEmpty() ? effectiveMicrosoftClientId() : account.clientId;
+
+    QString newLiveAccess, newLiveRefresh, oauthErr;
+    int expiresInSec = 3600;
+    if (!exchangeMicrosoftRefreshToken(clientId, account.refreshToken,
+                                       &newLiveAccess, &newLiveRefresh, &expiresInSec,
+                                       &oauthErr, error)) {
         return false;
     }
 
-    QUrl tokenUrl("https://login.live.com/oauth20_token.srf");
-    QUrlQuery query;
-    query.addQueryItem("client_id", account.clientId);
-    query.addQueryItem("refresh_token", account.refreshToken);
-    query.addQueryItem("grant_type", "refresh_token");
-    query.addQueryItem("redirect_uri", "https://login.live.com/oauth20_desktop.srf");
+    MicrosoftXboxAuthResult xbl;
+    if (!authenticateXboxLive(newLiveAccess, &xbl, error)) return false;
+    MicrosoftXboxAuthResult xsts;
+    if (!authenticateMinecraftXsts(xbl.token, &xsts, xbl.uhs, error)) return false;
 
-    QNetworkRequest request(tokenUrl);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-    QNetworkReply *reply = m_networkManager->post(request, query.toString(QUrl::FullyEncoded).toUtf8());
-    QEventLoop loop;
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        *error = "refresh token 已失效，请重新登录正版账号";
-        reply->deleteLater();
+    QString mcAccess, mcType, mcUser;
+    int mcExpiry = 3600;
+    if (!loginMinecraftWithXbox(xsts.uhs, xsts.token, &mcAccess, &mcType, &mcExpiry, &mcUser, error)) {
         return false;
     }
 
-    const QJsonObject object = QJsonDocument::fromJson(reply->readAll()).object();
-    reply->deleteLater();
-    const QString accessToken = object.value("access_token").toString();
-    if (accessToken.isEmpty()) {
-        *error = "refresh token 交换失败";
-        return false;
-    }
+    account.accessToken = mcAccess;
+    account.tokenType = mcType;
+    if (!newLiveRefresh.isEmpty()) account.refreshToken = newLiveRefresh;
+    account.clientId = clientId;
+    if (!xsts.xuid.isEmpty()) account.xuid = xsts.xuid;
+    account.expiry = QDateTime::currentDateTimeUtc().addSecs(expiresInSec > 0 ? expiresInSec : mcExpiry);
+    account.microsoftUsername = mcUser;
 
-    account.refreshToken = object.value("refresh_token").toString(account.refreshToken);
-    account.expiry = QDateTime::currentDateTimeUtc().addSecs(object.value("expires_in").toInt(3600));
-
-    QString localError;
-    const QString pseudoRedirect = accessToken;
-    Q_UNUSED(pseudoRedirect);
-
-    QString xblError;
-    QJsonObject xbl;
-    {
-        QNetworkRequest req(QUrl("https://user.auth.xboxlive.com/user/authenticate"));
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        const QJsonObject payload{
-            {"Properties", QJsonObject{
-                {"AuthMethod", "RPS"},
-                {"SiteName", "user.auth.xboxlive.com"},
-                {"RpsTicket", "d=" + accessToken}
-            }},
-            {"RelyingParty", "http://auth.xboxlive.com"},
-            {"TokenType", "JWT"}
-        };
-        QNetworkReply *jsonReply = m_networkManager->post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
-        QEventLoop localLoop;
-        connect(jsonReply, &QNetworkReply::finished, &localLoop, &QEventLoop::quit);
-        localLoop.exec();
-        if (jsonReply->error() != QNetworkReply::NoError) {
-            xblError = jsonReply->errorString();
-            jsonReply->deleteLater();
-        } else {
-            xbl = QJsonDocument::fromJson(jsonReply->readAll()).object();
-            jsonReply->deleteLater();
+    if (account.uuid.isEmpty() || account.username.isEmpty()) {
+        QString uuid, name;
+        if (fetchMinecraftProfile(mcType, mcAccess, &uuid, &name, error)) {
+            account.uuid = uuid;
+            account.profileId = uuid;
+            account.username = name;
         }
     }
-    if (!xblError.isEmpty()) {
-        *error = xblError;
-        return false;
-    }
-
-    const QString xblToken = xbl.value("Token").toString();
-    const QJsonArray refreshedUsers = xbl.value("DisplayClaims").toObject().value("xui").toArray();
-    const QJsonObject refreshedUser = refreshedUsers.isEmpty() ? QJsonObject() : refreshedUsers.first().toObject();
-    const QString uhs = refreshedUser.value("uhs").toString();
-    account.xuid = refreshedUser.value("xid").toString(account.xuid);
-
-    QJsonObject xsts;
-    {
-        QNetworkRequest req(QUrl("https://xsts.auth.xboxlive.com/xsts/authorize"));
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        const QJsonObject payload{
-            {"Properties", QJsonObject{
-                {"SandboxId", "RETAIL"},
-                {"UserTokens", QJsonArray{ xblToken }}
-            }},
-            {"RelyingParty", "rp://api.minecraftservices.com/"},
-            {"TokenType", "JWT"}
-        };
-        QNetworkReply *jsonReply = m_networkManager->post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
-        QEventLoop localLoop;
-        connect(jsonReply, &QNetworkReply::finished, &localLoop, &QEventLoop::quit);
-        localLoop.exec();
-        if (jsonReply->error() != QNetworkReply::NoError) {
-            *error = jsonReply->errorString();
-            jsonReply->deleteLater();
-            return false;
-        }
-        xsts = QJsonDocument::fromJson(jsonReply->readAll()).object();
-        jsonReply->deleteLater();
-    }
-
-    QJsonObject mcAuth;
-    {
-        QNetworkRequest req(QUrl("https://api.minecraftservices.com/authentication/login_with_xbox"));
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        const QJsonObject payload{
-            {"identityToken", QString("XBL3.0 x=%1;%2").arg(uhs, xsts.value("Token").toString())}
-        };
-        QNetworkReply *jsonReply = m_networkManager->post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
-        QEventLoop localLoop;
-        connect(jsonReply, &QNetworkReply::finished, &localLoop, &QEventLoop::quit);
-        localLoop.exec();
-        if (jsonReply->error() != QNetworkReply::NoError) {
-            *error = jsonReply->errorString();
-            jsonReply->deleteLater();
-            return false;
-        }
-        mcAuth = QJsonDocument::fromJson(jsonReply->readAll()).object();
-        jsonReply->deleteLater();
-    }
-
-    account.accessToken = mcAuth.value("access_token").toString();
     return true;
 }
 
@@ -1681,12 +2206,15 @@ bool LauncherCore::ensureMicrosoftAccountUsable(Account &account, QString *error
     if (account.type != Account::Type::Microsoft) {
         return true;
     }
-    if (account.expiry.isValid() && account.expiry > QDateTime::currentDateTimeUtc().addSecs(120)
+    if (account.expiry.isValid()
+        && account.expiry > QDateTime::currentDateTimeUtc().addSecs(120)
         && !account.accessToken.isEmpty()) {
         return true;
     }
     return refreshMicrosoftAccount(account, error);
 }
+
+
 
 bool LauncherCore::installVanillaVersion(const QString &versionId, QString *error)
 {

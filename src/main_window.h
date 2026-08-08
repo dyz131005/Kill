@@ -53,6 +53,9 @@ private:
     QWidget *buildInstallLoaderTab();
     QWidget *buildSettingsTab();
     QWidget *buildLogsTab();
+    QWidget *buildAboutPage();
+    void showAboutPage();
+    void leaveAboutPage();
 
     void applyTheme(bool dark);
     void toggleTheme();
@@ -95,6 +98,7 @@ private:
     void showVersionInstallDialog(const QJsonObject &versionObj, QWidget *parent = nullptr);
     void downloadModToLocation(const QJsonObject &versionObj, const QJsonObject &fileObj, const QString &targetType, int locationMode, const QString &customDir, QWidget *parent = nullptr);
     void downloadJava();
+    void runMicrosoftDeviceLoginFlow();
 
     LauncherCore m_core;
     QJsonArray m_remoteVersions;
@@ -112,13 +116,18 @@ private:
     QList<QPushButton *> m_manageNavButtons;
 
     QTabWidget *m_mainTabWidget = nullptr;
+    QStackedWidget *m_mainStackedWidget = nullptr;
+    QWidget *m_mainTabsPage = nullptr;
+    QWidget *m_aboutPage = nullptr;
+    QPushButton *m_aboutBackButton = nullptr;
+    QPushButton *m_aboutEntryButton = nullptr;
+    QPlainTextEdit *m_aboutUpdateLogEdit = nullptr;
+    int m_mainTabBeforeAbout = 0;
     QPushButton *m_launchButton = nullptr;
 
     QLineEdit *m_offlineNameEdit = nullptr;
-    QLineEdit *m_msaRedirectEdit = nullptr;
     QPushButton *m_addOfflineButton = nullptr;
-    QPushButton *m_openMicrosoftAuthButton = nullptr;
-    QPushButton *m_addMicrosoftButton = nullptr;
+    QPushButton *m_openMicrosoftDeviceButton = nullptr;
     QComboBox *m_accountsOverviewCombo = nullptr;
 
     QLineEdit *m_resourceQueryEdit = nullptr;

@@ -12,6 +12,8 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -443,7 +445,15 @@ void MainWindow::buildUi()
 
     mainLayout->addWidget(buildTopBar());
 
-    auto *tabs = new QTabWidget(this);
+    m_mainStackedWidget = new QStackedWidget(this);
+    m_mainStackedWidget->setStyleSheet("QStackedWidget { background-color: transparent; }");
+
+    m_mainTabsPage = new QWidget(m_mainStackedWidget);
+    auto *tabsLayout = new QVBoxLayout(m_mainTabsPage);
+    tabsLayout->setContentsMargins(0, 0, 0, 0);
+    tabsLayout->setSpacing(0);
+
+    auto *tabs = new QTabWidget(m_mainTabsPage);
     m_mainTabWidget = tabs;
     tabs->addTab(buildHomeTab(), "启动");
     tabs->addTab(buildAccountsTab(), "账户");
@@ -451,7 +461,14 @@ void MainWindow::buildUi()
     tabs->addTab(buildVersionManagementTab(), "版本管理");
     tabs->addTab(buildSettingsTab(), "设置");
     tabs->addTab(buildLogsTab(), "日志");
-    mainLayout->addWidget(tabs, 1);
+    tabsLayout->addWidget(tabs, 1);
+
+    m_mainStackedWidget->addWidget(m_mainTabsPage);
+    m_aboutPage = buildAboutPage();
+    m_mainStackedWidget->addWidget(m_aboutPage);
+    m_mainStackedWidget->setCurrentWidget(m_mainTabsPage);
+
+    mainLayout->addWidget(m_mainStackedWidget, 1);
 
     // 底部进度区域
     auto *statusWidget = new QWidget(this);
@@ -545,9 +562,35 @@ QWidget *MainWindow::buildTopBar()
         toggleTheme();
     });
 
+    m_aboutEntryButton = new QPushButton("ℹ️ 关于", topBar);
+    m_aboutEntryButton->setFixedSize(96, 36);
+    m_aboutEntryButton->setCursor(Qt::PointingHandCursor);
+    m_aboutEntryButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #f3f4f6;"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 8px;"
+        "  color: #111827;"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #e5e7eb;"
+        "  border-color: #d1d5db;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #d1d5db;"
+        "}"
+    );
+    connect(m_aboutEntryButton, &QPushButton::clicked, this, [this] {
+        animateButton(m_aboutEntryButton);
+        showAboutPage();
+    });
+
     layout->addWidget(titleLabel);
     layout->addWidget(subtitleLabel);
     layout->addStretch();
+    layout->addWidget(m_aboutEntryButton);
     layout->addWidget(m_themeToggleButton);
 
     return topBar;
@@ -722,6 +765,121 @@ void MainWindow::applyTheme(bool dark)
     this->setStyleSheet(baseStyle);
     if (auto *app = qobject_cast<QApplication *>(QCoreApplication::instance())) {
         app->setStyleSheet(baseStyle);
+    }
+
+    const QString topBarLight =
+        "#topBar {"
+        "  background-color: #ffffff;"
+        "  border-bottom: 1px solid #e5e7eb;"
+        "}";
+    const QString topBarDark =
+        "#topBar {"
+        "  background-color: #1f2937;"
+        "  border-bottom: 1px solid #374151;"
+        "}";
+    const QString generalBtnLight =
+        "QPushButton {"
+        "  background-color: #f3f4f6;"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 8px;"
+        "  color: #111827;"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #e5e7eb;"
+        "  border-color: #d1d5db;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #d1d5db;"
+        "}";
+    const QString generalBtnDark =
+        "QPushButton {"
+        "  background-color: #374151;"
+        "  border: 1px solid #4b5563;"
+        "  border-radius: 8px;"
+        "  color: #e5e7eb;"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #4b5563;"
+        "  border-color: #6b7280;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #1f2937;"
+        "}";
+    const QString backBtnLight =
+        "QPushButton {"
+        "  background-color: #f3f4f6;"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 10px;"
+        "  color: #374151;"
+        "  font-size: 18px;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #e5e7eb;"
+        "  border-color: #d1d5db;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #d1d5db;"
+        "}";
+    const QString backBtnDark =
+        "QPushButton {"
+        "  background-color: #1f2937;"
+        "  border: 1px solid #4b5563;"
+        "  border-radius: 10px;"
+        "  color: #e5e7eb;"
+        "  font-size: 18px;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #374151;"
+        "  border-color: #6b7280;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #111827;"
+        "}";
+    const QString changelogEditLight =
+        "QPlainTextEdit {"
+        "  background-color: #f9fafb;"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 8px;"
+        "  padding: 12px;"
+        "  font-family: Consolas, 'Courier New', 'Microsoft YaHei', monospace;"
+        "  font-size: 13px;"
+        "  color: #111827;"
+        "}";
+    const QString changelogEditDark =
+        "QPlainTextEdit {"
+        "  background-color: #111827;"
+        "  border: 1px solid #374151;"
+        "  border-radius: 8px;"
+        "  padding: 12px;"
+        "  font-family: Consolas, 'Courier New', 'Microsoft YaHei', monospace;"
+        "  font-size: 13px;"
+        "  color: #e5e7eb;"
+        "}";
+
+    auto *topBar = findChild<QWidget *>("topBar");
+    if (topBar) {
+        topBar->setStyleSheet(dark ? topBarDark : topBarLight);
+    }
+    if (m_themeToggleButton) {
+        m_themeToggleButton->setStyleSheet(dark ? generalBtnDark : generalBtnLight);
+    }
+    if (m_aboutEntryButton) {
+        m_aboutEntryButton->setStyleSheet(dark ? generalBtnDark : generalBtnLight);
+    }
+    if (m_modsBackButton) {
+        m_modsBackButton->setStyleSheet(dark ? backBtnDark : backBtnLight);
+    }
+    if (m_aboutBackButton) {
+        m_aboutBackButton->setStyleSheet(dark ? backBtnDark : backBtnLight);
+    }
+    if (m_aboutUpdateLogEdit) {
+        m_aboutUpdateLogEdit->setStyleSheet(dark ? changelogEditDark : changelogEditLight);
     }
 }
 
@@ -1787,23 +1945,17 @@ QWidget *MainWindow::buildAccountsTab()
     auto *msaBox = new QGroupBox("正版 Microsoft 账户", page);
     auto *msaLayout = new QVBoxLayout(msaBox);
     auto *msaHint = new QLabel(
-        "1. 在设置里填入 Client ID。\n"
-        "2. 点击“打开授权页”登录账号。\n"
-        "3. 登录后复制完整回调地址或 code 到下面输入框。\n"
-        "4. 点击“导入正版账户”。",
+        "使用设备码登录 Microsoft 正版账户：\n"
+        "1. 点击下方「设备码登录」按钮。\n"
+        "2. 弹窗会显示验证码和验证地址。\n"
+        "3. 手动在浏览器打开验证地址，输入验证码后完成登录和授权。\n"
+        "4. 回到本窗口等待自动轮询检测，登录完成会自动提示。",
         msaBox);
     msaHint->setWordWrap(true);
     msaHint->setProperty("role", "hint");
-    m_msaRedirectEdit = new QLineEdit(msaBox);
-    m_msaRedirectEdit->setPlaceholderText("粘贴 https://login.live.com/oauth20_desktop.srf?... 或 code");
-    auto *msaButtonRow = new QHBoxLayout();
-    m_openMicrosoftAuthButton = new QPushButton("打开授权页", msaBox);
-    m_addMicrosoftButton = new QPushButton("导入正版账户", msaBox);
-    msaButtonRow->addWidget(m_openMicrosoftAuthButton);
-    msaButtonRow->addWidget(m_addMicrosoftButton);
+    m_openMicrosoftDeviceButton = new QPushButton("设备码登录", msaBox);
     msaLayout->addWidget(msaHint);
-    msaLayout->addWidget(m_msaRedirectEdit);
-    msaLayout->addLayout(msaButtonRow);
+    msaLayout->addWidget(m_openMicrosoftDeviceButton);
 
     layout->addWidget(overviewBox);
     layout->addWidget(offlineBox);
@@ -1821,32 +1973,11 @@ QWidget *MainWindow::buildAccountsTab()
         showInfo(this, "离线账户已添加。");
     });
 
-    connect(m_openMicrosoftAuthButton, &QPushButton::clicked, this, [this] {
+    connect(m_openMicrosoftDeviceButton, &QPushButton::clicked, this, [this] {
         if (!saveUiToConfig()) {
             return;
         }
-        const QString url = m_core.buildMicrosoftAuthUrl();
-        if (url.isEmpty()) {
-            showError(this, "请先在设置中填写 Microsoft Client ID。");
-            return;
-        }
-        appendLog("打开 Microsoft OAuth 授权页");
-        QDesktopServices::openUrl(QUrl(url));
-    });
-
-    connect(m_addMicrosoftButton, &QPushButton::clicked, this, [this] {
-        if (!saveUiToConfig()) {
-            return;
-        }
-        QString error;
-        if (!m_core.loginMicrosoftWithRedirectUrl(m_msaRedirectEdit->text(), &error)) {
-            appendLog(QString("导入正版账户失败: %1").arg(error));
-            showError(this, error);
-            return;
-        }
-        m_msaRedirectEdit->clear();
-        refreshAccountsUi();
-        showInfo(this, "正版账户已导入。");
+        runMicrosoftDeviceLoginFlow();
     });
 
     return page;
@@ -1983,6 +2114,215 @@ QWidget *MainWindow::buildLogsTab()
     connect(copyLogPathButton, &QPushButton::clicked, this, &MainWindow::copyCurrentLogPath);
 
     return page;
+}
+
+QWidget *MainWindow::buildAboutPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto *topBar = new QWidget(page);
+    topBar->setFixedHeight(52);
+    auto *topBarLayout = new QHBoxLayout(topBar);
+    topBarLayout->setContentsMargins(16, 8, 16, 8);
+    topBarLayout->setSpacing(12);
+
+    m_aboutBackButton = new QPushButton("←", topBar);
+    m_aboutBackButton->setFixedSize(38, 36);
+    m_aboutBackButton->setCursor(Qt::PointingHandCursor);
+    m_aboutBackButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #f3f4f6;"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 10px;"
+        "  color: #374151;"
+        "  font-size: 18px;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #e5e7eb;"
+        "  border-color: #d1d5db;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #d1d5db;"
+        "}"
+    );
+    topBarLayout->addWidget(m_aboutBackButton);
+
+    auto *pageTitle = new QLabel("关于", topBar);
+    pageTitle->setStyleSheet("font-size: 18px; font-weight: 700; color: #111827;");
+    topBarLayout->addWidget(pageTitle);
+    topBarLayout->addStretch();
+
+    layout->addWidget(topBar);
+
+    auto *scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setStyleSheet("QScrollArea { border: none; background: transparent; }");
+    auto *contentPage = new QWidget(scrollArea);
+    auto *contentLayout = new QVBoxLayout(contentPage);
+    contentLayout->setContentsMargins(24, 20, 24, 24);
+    contentLayout->setSpacing(20);
+
+    auto *infoBox = new QGroupBox("基本信息", contentPage);
+    infoBox->setStyleSheet(
+        "QGroupBox {"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 12px;"
+        "  margin-top: 8px;"
+        "  padding-top: 16px;"
+        "  background-color: #ffffff;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  left: 16px;"
+        "  padding: 0 8px;"
+        "  font-size: 13px;"
+        "  font-weight: 600;"
+        "  color: #374151;"
+        "}"
+    );
+    auto *infoLayout = new QFormLayout(infoBox);
+    infoLayout->setContentsMargins(20, 20, 20, 20);
+    infoLayout->setHorizontalSpacing(16);
+    infoLayout->setVerticalSpacing(14);
+    infoLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    auto *appNameLabel = new QLabel("Kill - Minecraft Launcher", infoBox);
+    appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
+    infoLayout->addRow("程序名称：", appNameLabel);
+
+    auto *versionLabel = new QLabel("1.1", infoBox);
+    versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
+    infoLayout->addRow("当前版本：", versionLabel);
+
+    auto *authorLabel = new QLabel("dyz131005", infoBox);
+    authorLabel->setStyleSheet("font-size: 14px; color: #111827;");
+    infoLayout->addRow("作者：", authorLabel);
+
+    auto *repoRow = new QWidget(infoBox);
+    auto *repoRowLayout = new QHBoxLayout(repoRow);
+    repoRowLayout->setContentsMargins(0, 0, 0, 0);
+    repoRowLayout->setSpacing(10);
+
+    auto *repoLabel = new QLabel("https://github.com/dyz131005/", repoRow);
+    repoLabel->setStyleSheet("font-size: 14px; color: #2563eb;");
+    repoLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto *openRepoButton = new QPushButton("打开 GitHub 仓库", repoRow);
+    openRepoButton->setCursor(Qt::PointingHandCursor);
+    openRepoButton->setStyleSheet(
+        "QPushButton {"
+        "  padding: 6px 14px;"
+        "  background-color: #3b82f6;"
+        "  color: #ffffff;"
+        "  border: none;"
+        "  border-radius: 6px;"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #2563eb;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #1d4ed8;"
+        "}"
+    );
+    connect(openRepoButton, &QPushButton::clicked, this, [openRepoButton, this] {
+        animateButton(openRepoButton);
+        QDesktopServices::openUrl(QUrl("https://github.com/dyz131005/"));
+    });
+
+    repoRowLayout->addWidget(repoLabel, 1);
+    repoRowLayout->addWidget(openRepoButton, 0, Qt::AlignRight);
+    infoLayout->addRow("GitHub 仓库：", repoRow);
+
+    contentLayout->addWidget(infoBox);
+
+    auto *changelogBox = new QGroupBox("更新日志", contentPage);
+    changelogBox->setStyleSheet(
+        "QGroupBox {"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 12px;"
+        "  margin-top: 8px;"
+        "  padding-top: 16px;"
+        "  background-color: #ffffff;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  left: 16px;"
+        "  padding: 0 8px;"
+        "  font-size: 13px;"
+        "  font-weight: 600;"
+        "  color: #374151;"
+        "}"
+    );
+    auto *changelogLayout = new QVBoxLayout(changelogBox);
+    changelogLayout->setContentsMargins(16, 20, 16, 16);
+
+    m_aboutUpdateLogEdit = new QPlainTextEdit(changelogBox);
+    m_aboutUpdateLogEdit->setReadOnly(true);
+    m_aboutUpdateLogEdit->setMinimumHeight(260);
+    m_aboutUpdateLogEdit->setStyleSheet(
+        "QPlainTextEdit {"
+        "  background-color: #f9fafb;"
+        "  border: 1px solid #e5e7eb;"
+        "  border-radius: 8px;"
+        "  padding: 12px;"
+        "  font-family: Consolas, 'Courier New', 'Microsoft YaHei', monospace;"
+        "  font-size: 13px;"
+        "  color: #111827;"
+        "}"
+    );
+
+    const QString exeDir = QCoreApplication::applicationDirPath();
+    const QString logPath = exeDir + QDir::separator() + "updatelog.txt";
+    QFile logFile(logPath);
+    if (logFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream stream(&logFile);
+        m_aboutUpdateLogEdit->setPlainText(stream.readAll());
+        logFile.close();
+    } else {
+        m_aboutUpdateLogEdit->setPlainText(QString(
+            "（未找到 %1\n"
+            "请将更新日志以 UTF-8 编码保存为 updatelog.txt 放在程序同目录下。）"
+        ).arg(QDir::toNativeSeparators(logPath)));
+    }
+
+    changelogLayout->addWidget(m_aboutUpdateLogEdit);
+    contentLayout->addWidget(changelogBox);
+
+    contentLayout->addStretch();
+    scrollArea->setWidget(contentPage);
+    layout->addWidget(scrollArea, 1);
+
+    connect(m_aboutBackButton, &QPushButton::clicked, this, [this] {
+        animateButton(m_aboutBackButton);
+        leaveAboutPage();
+    });
+
+    return page;
+}
+
+void MainWindow::showAboutPage()
+{
+    if (!m_mainStackedWidget || !m_mainTabsPage || !m_aboutPage || !m_mainTabWidget) {
+        return;
+    }
+    m_mainTabBeforeAbout = m_mainTabWidget->currentIndex();
+    m_mainStackedWidget->setCurrentWidget(m_aboutPage);
+}
+
+void MainWindow::leaveAboutPage()
+{
+    if (!m_mainStackedWidget || !m_mainTabsPage || !m_mainTabWidget) {
+        return;
+    }
+    m_mainStackedWidget->setCurrentWidget(m_mainTabsPage);
+    if (m_mainTabBeforeAbout >= 0 && m_mainTabBeforeAbout < m_mainTabWidget->count()) {
+        m_mainTabWidget->setCurrentIndex(m_mainTabBeforeAbout);
+    }
 }
 
 void MainWindow::loadConfigToUi()
@@ -5571,4 +5911,192 @@ void MainWindow::downloadJava()
 
     showInfo(this, QString("Java %1 下载成功！\n路径: %2").arg(javaVersion).arg(javaPath));
     appendLog("Java下载和安装完成！");
+}
+
+void MainWindow::runMicrosoftDeviceLoginFlow()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle("Microsoft 设备码登录");
+    dialog.setMinimumSize(520, 380);
+
+    auto *layout = new QVBoxLayout(&dialog);
+
+    auto *statusLabel = new QLabel("正在获取设备码，请稍候...", &dialog);
+    statusLabel->setWordWrap(true);
+    layout->addWidget(statusLabel);
+
+    auto *codeBox = new QWidget(&dialog);
+    auto *codeBoxLayout = new QVBoxLayout(codeBox);
+    codeBoxLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto *codeTitleLabel = new QLabel("您的验证码：", codeBox);
+    auto *codeValueLabel = new QLabel(codeBox);
+    {
+        QFont f = codeValueLabel->font();
+        f.setPointSize(f.pointSize() + 10);
+        f.setBold(true);
+        f.setLetterSpacing(QFont::AbsoluteSpacing, 4);
+        codeValueLabel->setFont(f);
+    }
+    codeValueLabel->setAlignment(Qt::AlignCenter);
+    codeValueLabel->setStyleSheet("background: #f5f5f5; padding: 16px; border-radius: 8px; color: #0078d4;");
+    codeValueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *copyButton = new QPushButton("复制验证码", codeBox);
+    auto *openButton = new QPushButton("打开验证页面", codeBox);
+
+    auto *btnRow1 = new QHBoxLayout();
+    btnRow1->addStretch();
+    btnRow1->addWidget(copyButton);
+    btnRow1->addWidget(openButton);
+    btnRow1->addStretch();
+
+    auto *hintLabel = new QLabel(
+        "步骤：\n"
+        "1. 点击「打开验证页面」或手动在浏览器中打开下方地址\n"
+        "2. 在网页中输入上面显示的验证码\n"
+        "3. 完成 Microsoft 账号登录和授权\n"
+        "4. 回到本窗口等待登录完成（会自动轮询检测状态）",
+        codeBox);
+    hintLabel->setWordWrap(true);
+
+    auto *linkLabel = new QLabel(codeBox);
+    linkLabel->setOpenExternalLinks(false);
+    linkLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    linkLabel->setStyleSheet("color: #0078d4;");
+
+    codeBoxLayout->addWidget(codeTitleLabel);
+    codeBoxLayout->addWidget(codeValueLabel);
+    codeBoxLayout->addLayout(btnRow1);
+    codeBoxLayout->addSpacing(8);
+    codeBoxLayout->addWidget(hintLabel);
+    codeBoxLayout->addSpacing(4);
+    codeBoxLayout->addWidget(linkLabel);
+    codeBox->hide();
+
+    layout->addWidget(codeBox);
+
+    auto *progressLabel = new QLabel(&dialog);
+    progressLabel->setWordWrap(true);
+    layout->addWidget(progressLabel);
+
+    layout->addStretch();
+
+    auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttonBox);
+
+    LauncherCore::MicrosoftDeviceCode deviceCode;
+    auto *pollTimer = new QTimer(&dialog);
+    pollTimer->setSingleShot(false);
+    bool userCancelled = false;
+    bool flowFinished = false;
+
+    auto stopPolling = [&]() {
+        if (pollTimer->isActive()) {
+            pollTimer->stop();
+        }
+    };
+
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, [&] {
+        userCancelled = true;
+        stopPolling();
+        dialog.reject();
+    });
+
+    connect(copyButton, &QPushButton::clicked, &dialog, [&] {
+        QGuiApplication::clipboard()->setText(deviceCode.userCode);
+        showInfo(this, "验证码已复制到剪贴板。");
+    });
+
+    connect(openButton, &QPushButton::clicked, &dialog, [&] {
+        QDesktopServices::openUrl(QUrl(deviceCode.verificationUri));
+    });
+
+    connect(linkLabel, &QLabel::linkActivated, &dialog, [](const QString &link) {
+        QDesktopServices::openUrl(QUrl(link));
+    });
+
+    QString startError;
+    if (!m_core.startMicrosoftDeviceLogin(&deviceCode, &startError)) {
+        statusLabel->setText("获取设备码失败：");
+        progressLabel->setText(startError);
+        progressLabel->setStyleSheet("color: #d13438;");
+        return;
+    }
+
+    codeValueLabel->setText(deviceCode.userCode);
+    const QString displayLink = deviceCode.verificationUri;
+    linkLabel->setText(QString("验证地址：<a href=\"%1\" style=\"color:#0078d4;text-decoration:underline;\">%2</a>")
+                       .arg(displayLink, displayLink));
+
+    statusLabel->setText("请在浏览器中完成验证：");
+    codeBox->show();
+
+    int intervalMs = qMax(1, deviceCode.intervalSec) * 1000;
+    pollTimer->setInterval(intervalMs);
+
+    connect(pollTimer, &QTimer::timeout, &dialog, [&] {
+        if (flowFinished || userCancelled) {
+            stopPolling();
+            return;
+        }
+
+        QString pollError, fatalError;
+        const auto outcome = m_core.pollMicrosoftDeviceLogin(deviceCode, &pollError, &fatalError);
+
+        switch (outcome) {
+        case LauncherCore::DevicePollOutcome::Pending:
+            progressLabel->setText(QString("等待用户授权中...（每 %1 秒检测一次）")
+                                   .arg(deviceCode.intervalSec));
+            progressLabel->setStyleSheet("");
+            break;
+
+        case LauncherCore::DevicePollOutcome::SlowDown:
+            intervalMs = qMax(5000, intervalMs + 5000);
+            pollTimer->setInterval(intervalMs);
+            progressLabel->setText(QString("服务器要求降速，已调整轮询间隔为 %1 秒...")
+                                   .arg(intervalMs / 1000));
+            progressLabel->setStyleSheet("");
+            break;
+
+        case LauncherCore::DevicePollOutcome::Expired:
+            stopPolling();
+            flowFinished = true;
+            statusLabel->setText("设备码已过期：");
+            progressLabel->setText("本次设备码请求已超时，请重新点击「设备码登录」发起新的流程。");
+            progressLabel->setStyleSheet("color: #d13438;");
+            buttonBox->clear();
+            buttonBox->setStandardButtons(QDialogButtonBox::Close);
+            break;
+
+        case LauncherCore::DevicePollOutcome::Authorized:
+            stopPolling();
+            flowFinished = true;
+            statusLabel->setText("登录成功！");
+            progressLabel->setText("已成功获取 Microsoft 正版账户凭证。");
+            progressLabel->setStyleSheet("color: #107c10;");
+            appendLog("Microsoft 正版账户通过 Device Code 登录成功。");
+            refreshAccountsUi();
+            QTimer::singleShot(800, &dialog, &QDialog::accept);
+            break;
+
+        case LauncherCore::DevicePollOutcome::Failed:
+            stopPolling();
+            flowFinished = true;
+            statusLabel->setText("登录失败：");
+            QString shown = !fatalError.isEmpty() ? fatalError : (!pollError.isEmpty() ? pollError : "未知错误");
+            progressLabel->setText(shown);
+            progressLabel->setStyleSheet("color: #d13438;");
+            appendLog(QString("Microsoft Device Code 登录失败: %1").arg(shown));
+            buttonBox->clear();
+            buttonBox->setStandardButtons(QDialogButtonBox::Close);
+            break;
+        }
+    });
+
+    pollTimer->start();
+    progressLabel->setText(QString("等待用户授权中...（每 %1 秒检测一次）").arg(deviceCode.intervalSec));
+
+    dialog.exec();
+    stopPolling();
 }

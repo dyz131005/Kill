@@ -8,6 +8,8 @@ count_simple.ps1
 
 # 2. HMCL 源码参考（不进本项目仓库）
 hmcl-reference/
+example/
+aider/
 
 # 3. CMake 构建目录
 build/
@@ -69,3 +71,4 @@ $RECYCLE.BIN/
 .AppleDouble
 .LSOverride
 ._*
+.aider*

@@ -31,6 +31,8 @@ QJsonObject Account::toJson() const
         {"clientId", clientId},
         {"xuid", xuid},
         {"profileId", profileId},
+        {"tokenType", tokenType},
+        {"microsoftUsername", microsoftUsername},
         {"expiry", expiry.toString(Qt::ISODate)}
     };
 }
@@ -47,6 +49,8 @@ Account Account::fromJson(const QJsonObject &object)
     account.clientId = object.value("clientId").toString();
     account.xuid = object.value("xuid").toString();
     account.profileId = object.value("profileId").toString();
+    account.tokenType = object.value("tokenType").toString();
+    account.microsoftUsername = object.value("microsoftUsername").toString();
     account.expiry = QDateTime::fromString(object.value("expiry").toString(), Qt::ISODate);
     return account;
 }

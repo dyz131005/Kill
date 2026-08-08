@@ -23,7 +23,43 @@ public:
     const ConfigStore *configStore() const;
 
     QStringList discoverJavaExecutables() const;
+
+    QString effectiveMicrosoftClientId() const;
+    [[deprecated("Use buildMicrosoftPkceAuthUrl() which supports PKCE for security.")]]
     QString buildMicrosoftAuthUrl() const;
+
+    struct MicrosoftPkceAuth {
+        QString authorizeUrl;
+        QString codeVerifier;
+        QString state;
+        QString redirectUri;
+    };
+    MicrosoftPkceAuth buildMicrosoftPkceAuthUrl() const;
+
+    bool loginMicrosoftAuthorizationCode(const QString &codeOrRedirectUrl,
+                                         const QString &codeVerifier,
+                                         QString *error);
+
+    struct MicrosoftDeviceCode {
+        QString userCode;
+        QString verificationUri;
+        QString deviceCode;
+        int intervalSec = 5;
+        qint64 expiresAtUtcSec = 0;
+    };
+    bool startMicrosoftDeviceLogin(MicrosoftDeviceCode *outCode, QString *error);
+
+    enum class DevicePollOutcome {
+        Pending,
+        Authorized,
+        Expired,
+        SlowDown,
+        Failed
+    };
+    DevicePollOutcome pollMicrosoftDeviceLogin(MicrosoftDeviceCode &ioCode, QString *pollErrorOut, QString *error);
+
+    QString microsoftDefaultRedirectUri() const;
+    QString microsoftOAuthScope() const;
 
     QJsonArray fetchVersionManifest(QString *error);
     QJsonArray filterVersionsByType(const QJsonArray &versions, const QString &type) const;
@@ -50,6 +86,7 @@ public:
 
     bool saveConfig(QString *error = nullptr);
     bool addOfflineAccount(const QString &username, QString *error);
+    [[deprecated("Use loginMicrosoftAuthorizationCode() with PKCE codeVerifier.")]]
     bool loginMicrosoftWithRedirectUrl(const QString &redirectUrl, QString *error);
     bool installVanillaVersion(const QString &versionId, QString *error);
     bool installVanillaVersionWithDialog(const QString &versionId, QString *error, QWidget *parentWidget = nullptr);
@@ -179,6 +216,67 @@ private:
     QJsonObject fetchJavaRuntimeManifest(QString *error);
     bool refreshMicrosoftAccount(Account &account, QString *error);
     bool ensureMicrosoftAccountUsable(Account &account, QString *error);
+
+    QString postJsonSync(const QUrl &url,
+                         const QJsonObject &payload,
+                         QString *error,
+                         const QList<QPair<QString, QString>> &headers = {},
+                         bool ignoreHttpError = false,
+                         int *outHttpCode = nullptr) const;
+    QString postFormSync(const QUrl &url,
+                         const QUrlQuery &form,
+                         QString *error,
+                         const QList<QPair<QString, QString>> &headers = {},
+                         bool ignoreHttpError = false,
+                         int *outHttpCode = nullptr) const;
+
+    QString describeXboxErrorCode(qint64 xErr, const QString &redirectUrl) const;
+
+    struct MicrosoftXboxAuthResult {
+        QString token;
+        QString uhs;
+        QString xuid;
+    };
+    bool authenticateXboxLive(const QString &liveAccessToken, MicrosoftXboxAuthResult *outXbl, QString *error) const;
+    bool authenticateMinecraftXsts(const QString &xblToken, MicrosoftXboxAuthResult *outXsts, const QString &expectedUhs, QString *error) const;
+    bool loginMinecraftWithXbox(const QString &uhs, const QString &xstsToken, QString *outMcAccessToken, QString *outMcTokenType, int *outExpiresInSec, QString *outUsername, QString *error) const;
+    bool checkMinecraftOwnership(const QString &mcAccessToken, QString *error);
+    bool fetchMinecraftProfile(const QString &mcTokenType, const QString &mcAccessToken, QString *outUuid, QString *outName, QString *error);
+
+    bool exchangeMicrosoftAuthCodeForToken(const QString &clientId,
+                                           const QString &code,
+                                           const QString &redirectUri,
+                                           const QString &codeVerifier,
+                                           QString *outAccessToken,
+                                           QString *outRefreshToken,
+                                           int *outExpiresInSec,
+                                           QString *outOAuthError,
+                                           QString *error) const;
+    bool exchangeMicrosoftDeviceCodeForToken(const QString &clientId,
+                                             const QString &deviceCode,
+                                             QString *outAccessToken,
+                                             QString *outRefreshToken,
+                                             int *outExpiresInSec,
+                                             QString *outPollError,
+                                             QString *error) const;
+    bool exchangeMicrosoftRefreshToken(const QString &clientId,
+                                       const QString &oldRefreshToken,
+                                       QString *outNewAccessToken,
+                                       QString *outNewRefreshToken,
+                                       int *outExpiresInSec,
+                                       QString *outOAuthError,
+                                       QString *error) const;
+
+    bool saveMicrosoftAccountFromTokens(const QString &liveAccessToken,
+                                        const QString &liveRefreshToken,
+                                        const QString &clientId,
+                                        int msExpiresInSec,
+                                        QString *error);
+    bool saveMicrosoftAccountFromTokensInternal(const QString &liveAccessToken,
+                                                const QString &liveRefreshToken,
+                                                const QString &clientId,
+                                                int msExpiresInSec,
+                                                QString *error);
     bool ensureLaunchAssetsAvailable(const VersionInstallContext &ctx, QString *error);
     bool ensureLaunchAssetsAvailableWithDialog(const VersionInstallContext &ctx,
                                               QString *error,

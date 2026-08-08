@@ -23,6 +23,8 @@ struct Account {
     QString clientId;
     QString xuid;
     QString profileId;
+    QString tokenType;
+    QString microsoftUsername;
     QDateTime expiry;
 
     QJsonObject toJson() const;
