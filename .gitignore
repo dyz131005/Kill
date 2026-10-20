@@ -72,3 +72,5 @@ $RECYCLE.BIN/
 .LSOverride
 ._*
 .aider*
+
+.forge-permissions.json

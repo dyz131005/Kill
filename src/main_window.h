@@ -54,6 +54,7 @@ private:
     QWidget *buildSettingsTab();
     QWidget *buildLogsTab();
     QWidget *buildAboutPage();
+    QWidget *buildAnnouncementBar();
     void showAboutPage();
     void leaveAboutPage();
 
@@ -121,6 +122,9 @@ private:
     QWidget *m_aboutPage = nullptr;
     QPushButton *m_aboutBackButton = nullptr;
     QPushButton *m_aboutEntryButton = nullptr;
+    QWidget *m_announcementBar = nullptr;
+    QLabel *m_announcementLabel = nullptr;
+    QPushButton *m_announcementCloseButton = nullptr;
     QPlainTextEdit *m_aboutUpdateLogEdit = nullptr;
     int m_mainTabBeforeAbout = 0;
     QPushButton *m_launchButton = nullptr;

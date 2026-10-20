@@ -65,6 +65,10 @@ if(WIN32)
     add_custom_command(TARGET Kill POST_BUILD
         # 创建输出目录
         COMMAND ${CMAKE_COMMAND} -E make_directory "${KILL_DIST_DIR}"
+        # 复制更新日志（关于页面运行期从程序目录读取）
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/updatelog.txt"
+            "${KILL_DIST_DIR}/updatelog.txt"
         # 复制主可执行文件
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Kill>"

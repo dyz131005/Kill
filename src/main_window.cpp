@@ -444,6 +444,7 @@ void MainWindow::buildUi()
     mainLayout->setSpacing(0);
 
     mainLayout->addWidget(buildTopBar());
+    mainLayout->addWidget(buildAnnouncementBar());
 
     m_mainStackedWidget = new QStackedWidget(this);
     m_mainStackedWidget->setStyleSheet("QStackedWidget { background-color: transparent; }");
@@ -594,6 +595,43 @@ QWidget *MainWindow::buildTopBar()
     layout->addWidget(m_themeToggleButton);
 
     return topBar;
+}
+
+QWidget *MainWindow::buildAnnouncementBar()
+{
+    auto *bar = new QWidget(this);
+    bar->setObjectName("announcementBar");
+    auto *layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(20, 8, 12, 8);
+    layout->setSpacing(10);
+
+    auto *iconLabel = new QLabel("📢", bar);
+    iconLabel->setStyleSheet("font-size: 15px;");
+    layout->addWidget(iconLabel);
+
+    m_announcementLabel = new QLabel(
+        QStringLiteral(
+            "【严正公告】我们坚决反对个别人士的恶意举报——这种行为严重破坏了 MC 社区的繁荣发展！"
+            "Kill 郑重承诺：绝不下架、绝不关闭任何下载功能，版本、模组、整合包、资源包下载将永久保持开放。"),
+        bar);
+    m_announcementLabel->setWordWrap(true);
+    m_announcementLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    layout->addWidget(m_announcementLabel, 1);
+
+    m_announcementCloseButton = new QPushButton("✕", bar);
+    m_announcementCloseButton->setFixedSize(24, 24);
+    m_announcementCloseButton->setCursor(Qt::PointingHandCursor);
+    m_announcementCloseButton->setToolTip("收起公告");
+    layout->addWidget(m_announcementCloseButton);
+
+    connect(m_announcementCloseButton, &QPushButton::clicked, this, [this] {
+        if (m_announcementBar) {
+            m_announcementBar->setVisible(false);
+        }
+    });
+
+    m_announcementBar = bar;
+    return bar;
 }
 
 void MainWindow::applyTheme(bool dark)
@@ -865,6 +903,25 @@ void MainWindow::applyTheme(bool dark)
     auto *topBar = findChild<QWidget *>("topBar");
     if (topBar) {
         topBar->setStyleSheet(dark ? topBarDark : topBarLight);
+    }
+    if (m_announcementBar) {
+        m_announcementBar->setStyleSheet(
+            dark
+                ? "#announcementBar { background-color: #78350f; border-bottom: 1px solid #92400e; }"
+                : "#announcementBar { background-color: #fffbeb; border-bottom: 1px solid #fcd34d; }");
+    }
+    if (m_announcementLabel) {
+        m_announcementLabel->setStyleSheet(
+            dark ? "font-size: 13px; font-weight: 600; color: #fde68a;"
+                 : "font-size: 13px; font-weight: 600; color: #92400e;");
+    }
+    if (m_announcementCloseButton) {
+        m_announcementCloseButton->setStyleSheet(
+            dark
+                ? "QPushButton { background: transparent; border: none; color: #fde68a; font-size: 14px; font-weight: 700; }"
+                  "QPushButton:hover { color: #ffffff; }"
+                : "QPushButton { background: transparent; border: none; color: #92400e; font-size: 14px; font-weight: 700; }"
+                  "QPushButton:hover { color: #451a03; }");
     }
     if (m_themeToggleButton) {
         m_themeToggleButton->setStyleSheet(dark ? generalBtnDark : generalBtnLight);
@@ -2194,7 +2251,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.1", infoBox);
+    auto *versionLabel = new QLabel("1.2", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
