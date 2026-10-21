@@ -12,7 +12,7 @@
 ;       用户 → C:\Users\<你>\AppData\Local\Programs\Kill  （即 AppData 下面）
 
 #define MyAppName "Kill"
-#define MyAppVersion "1.1"
+#define MyAppVersion "1.3"
 #define MyAppPublisher "dyz131005"
 #define MyAppURL "https://space.bilibili.com/3546716410218699"
 #define MyAppExeName "Kill.exe"

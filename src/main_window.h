@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QIcon>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QMainWindow>
 
 #include "launcher_core.h"
@@ -90,7 +92,11 @@ private:
     void populateModSearchResults(const QJsonArray &array, const QString &source, QVBoxLayout *resultsLayout);
     void refreshDownloadVersions();
     void populateDownloadVersionsTable();
+    void populateDownloadVersionList();
+    void updateVersionDetailPanel();
     void downloadSelectedVersion();
+    static QIcon versionIconFor(const QString &versionId, const QString &versionType);
+    static QString versionTypeDisplayName(const QString &type);
     void refreshLoaderVersions();
     void installSelectedLoader();
     void showResourceDetails();
@@ -171,9 +177,22 @@ private:
     QString m_logFilePath;
 
     QComboBox *m_downloadVersionTypeCombo = nullptr;
-    QTableWidget *m_downloadVersionsTable = nullptr;
+    QLineEdit *m_downloadVersionSearchEdit = nullptr;
+    QListWidget *m_downloadVersionList = nullptr;
     QPushButton *m_refreshDownloadVersionsButton = nullptr;
     QPushButton *m_downloadSelectedVersionButton = nullptr;
+
+    // HMCL 风格：右侧版本详情卡片
+    QLabel *m_versionDetailIcon = nullptr;
+    QLabel *m_versionDetailTitle = nullptr;
+    QLabel *m_versionDetailType = nullptr;
+    QLabel *m_versionDetailReleaseTime = nullptr;
+    QLabel *m_versionDetailSummary = nullptr;
+    QLabel *m_versionDetailPlaceholder = nullptr;
+    QWidget *m_versionDetailPanel = nullptr;
+    QPushButton *m_versionDetailInstallButton = nullptr;
+    QJsonObject m_selectedDownloadVersion;
+
     QJsonArray m_allDownloadVersions;
 
     QComboBox *m_manageVersionCombo = nullptr;

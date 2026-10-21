@@ -1083,46 +1083,157 @@ QWidget *MainWindow::buildDownloadVersionsPage()
 {
     auto *page = new QWidget(this);
     auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(16, 16, 16, 16);
     layout->setSpacing(12);
 
+    auto *headerRow = new QHBoxLayout();
     auto *pageTitle = new QLabel("下载 Minecraft 版本", page);
-    pageTitle->setStyleSheet("font-size: 18px; font-weight: 700; margin-bottom: 4px;");
-    layout->addWidget(pageTitle);
+    pageTitle->setStyleSheet("font-size: 18px; font-weight: 700; color: #111827;");
+    headerRow->addWidget(pageTitle);
+    headerRow->addStretch();
 
-    auto *filterBox = new QGroupBox("筛选条件", page);
-    auto *filterLayout = new QHBoxLayout(filterBox);
+    m_refreshDownloadVersionsButton = new QPushButton("🔄 刷新列表", page);
+    m_refreshDownloadVersionsButton->setCursor(Qt::PointingHandCursor);
+    headerRow->addWidget(m_refreshDownloadVersionsButton);
+    layout->addLayout(headerRow);
 
-    filterLayout->addWidget(new QLabel("版本类型:"));
-    m_downloadVersionTypeCombo = new QComboBox(filterBox);
+    auto *filterRow = new QHBoxLayout();
+    filterRow->setSpacing(10);
+    auto *typeLabel = new QLabel("版本类型：", page);
+    typeLabel->setStyleSheet("font-size: 13px; color: #374151;");
+    filterRow->addWidget(typeLabel);
+
+    m_downloadVersionTypeCombo = new QComboBox(page);
     m_downloadVersionTypeCombo->addItem("所有版本", "all");
     m_downloadVersionTypeCombo->addItem("正式版 (Release)", "release");
     m_downloadVersionTypeCombo->addItem("快照版 (Snapshot)", "snapshot");
     m_downloadVersionTypeCombo->addItem("远古版 (Beta)", "old_beta");
     m_downloadVersionTypeCombo->addItem("远古版 (Alpha)", "old_alpha");
     m_downloadVersionTypeCombo->addItem("愚人节版", "april_fools");
-    filterLayout->addWidget(m_downloadVersionTypeCombo);
+    filterRow->addWidget(m_downloadVersionTypeCombo);
 
-    m_refreshDownloadVersionsButton = new QPushButton("🔄 刷新列表", filterBox);
-    filterLayout->addWidget(m_refreshDownloadVersionsButton);
+    m_downloadVersionSearchEdit = new QLineEdit(page);
+    m_downloadVersionSearchEdit->setPlaceholderText("搜索版本号…");
+    m_downloadVersionSearchEdit->setClearButtonEnabled(true);
+    m_downloadVersionSearchEdit->setStyleSheet(
+        "QLineEdit {"
+        "  padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 8px;"
+        "  background-color: #ffffff; font-size: 13px; color: #1f2937;"
+        "}"
+        "QLineEdit:focus { border: 1px solid #3b82f6; }"
+    );
+    filterRow->addWidget(m_downloadVersionSearchEdit, 1);
+    layout->addLayout(filterRow);
 
-    m_downloadSelectedVersionButton = new QPushButton("⬇️ 下载选中版本", filterBox);
-    filterLayout->addWidget(m_downloadSelectedVersionButton);
+    auto *splitter = new QSplitter(Qt::Horizontal, page);
+    splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(8);
 
-    layout->addWidget(filterBox);
+    m_downloadVersionList = new QListWidget(splitter);
+    m_downloadVersionList->setObjectName("downloadVersionList");
+    m_downloadVersionList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_downloadVersionList->setUniformItemSizes(false);
+    m_downloadVersionList->setSpacing(2);
+    m_downloadVersionList->setIconSize(QSize(32, 32));
+    m_downloadVersionList->setStyleSheet(
+        "QListWidget {"
+        "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;"
+        "  padding: 6px; outline: none;"
+        "}"
+        "QListWidget::item {"
+        "  padding: 8px 10px; border-radius: 8px; color: #111827;"
+        "}"
+        "QListWidget::item:hover { background-color: #f3f4f6; }"
+        "QListWidget::item:selected {"
+        "  background-color: rgba(59, 130, 246, 0.14); color: #1d4ed8;"
+        "}"
+    );
+    splitter->addWidget(m_downloadVersionList);
 
-    m_downloadVersionsTable = new QTableWidget(page);
-    m_downloadVersionsTable->setColumnCount(3);
-    m_downloadVersionsTable->setHorizontalHeaderLabels({"版本号", "类型", "发布时间"});
-    m_downloadVersionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_downloadVersionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_downloadVersionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_downloadVersionsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_downloadVersionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_downloadVersionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_downloadVersionsTable->setAlternatingRowColors(true);
+    m_versionDetailPanel = new QWidget(splitter);
+    m_versionDetailPanel->setObjectName("versionDetailPanel");
+    m_versionDetailPanel->setStyleSheet(
+        "#versionDetailPanel {"
+        "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;"
+        "}"
+    );
+    auto *detailLayout = new QVBoxLayout(m_versionDetailPanel);
+    detailLayout->setContentsMargins(24, 24, 24, 24);
+    detailLayout->setSpacing(16);
 
-    layout->addWidget(m_downloadVersionsTable, 1);
+    m_versionDetailPlaceholder = new QLabel("在左侧选择要安装的版本", m_versionDetailPanel);
+    m_versionDetailPlaceholder->setAlignment(Qt::AlignCenter);
+    m_versionDetailPlaceholder->setStyleSheet("font-size: 14px; color: #9ca3af;");
+    detailLayout->addWidget(m_versionDetailPlaceholder);
+    detailLayout->addStretch();
+
+    auto *detailHeader = new QWidget(m_versionDetailPanel);
+    auto *detailHeaderLayout = new QHBoxLayout(detailHeader);
+    detailHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    detailHeaderLayout->setSpacing(16);
+
+    m_versionDetailIcon = new QLabel(detailHeader);
+    m_versionDetailIcon->setFixedSize(64, 64);
+    m_versionDetailIcon->setScaledContents(true);
+    m_versionDetailIcon->setStyleSheet("background: transparent;");
+    detailHeaderLayout->addWidget(m_versionDetailIcon, 0, Qt::AlignTop);
+
+    auto *detailTitleBox = new QVBoxLayout();
+    detailTitleBox->setSpacing(4);
+    m_versionDetailTitle = new QLabel(detailHeader);
+    m_versionDetailTitle->setStyleSheet("font-size: 22px; font-weight: 700; color: #111827;");
+    m_versionDetailTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    detailTitleBox->addWidget(m_versionDetailTitle);
+    m_versionDetailType = new QLabel(detailHeader);
+    m_versionDetailType->setStyleSheet("font-size: 13px; color: #6b7280;");
+    detailTitleBox->addWidget(m_versionDetailType);
+    detailHeaderLayout->addLayout(detailTitleBox, 1);
+    detailLayout->addWidget(detailHeader);
+
+    auto *metaFrame = new QFrame(m_versionDetailPanel);
+    metaFrame->setStyleSheet("QFrame { background-color: #f9fafb; border: 1px solid #eef0f3; border-radius: 10px; }");
+    auto *metaLayout = new QVBoxLayout(metaFrame);
+    metaLayout->setContentsMargins(16, 14, 16, 14);
+    metaLayout->setSpacing(8);
+    m_versionDetailReleaseTime = new QLabel(metaFrame);
+    m_versionDetailReleaseTime->setStyleSheet("font-size: 13px; color: #374151;");
+    metaLayout->addWidget(m_versionDetailReleaseTime);
+    m_versionDetailSummary = new QLabel(metaFrame);
+    m_versionDetailSummary->setWordWrap(true);
+    m_versionDetailSummary->setStyleSheet("font-size: 13px; color: #4b5563;");
+    metaLayout->addWidget(m_versionDetailSummary);
+    detailLayout->addWidget(metaFrame);
+
+    detailLayout->addStretch();
+
+    m_versionDetailInstallButton = new QPushButton("安装此版本", m_versionDetailPanel);
+    m_versionDetailInstallButton->setCursor(Qt::PointingHandCursor);
+    m_versionDetailInstallButton->setFixedHeight(42);
+    m_versionDetailInstallButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #3b82f6; color: #ffffff; border: none;"
+        "  border-radius: 10px; font-size: 15px; font-weight: 600;"
+        "}"
+        "QPushButton:hover { background-color: #2563eb; }"
+        "QPushButton:pressed { background-color: #1d4ed8; }"
+        "QPushButton:disabled { background-color: #cbd5e1; color: #f8fafc; }"
+    );
+    detailLayout->addWidget(m_versionDetailInstallButton);
+
+    splitter->addWidget(m_versionDetailPanel);
+    splitter->setStretchFactor(0, 2);
+    splitter->setStretchFactor(1, 3);
+    splitter->setSizes({420, 620});
+
+    layout->addWidget(splitter, 1);
+
+    if (m_versionDetailIcon) m_versionDetailIcon->hide();
+    if (m_versionDetailPlaceholder) m_versionDetailPlaceholder->show();
+    if (m_versionDetailTitle) m_versionDetailTitle->hide();
+    if (m_versionDetailType) m_versionDetailType->hide();
+    if (m_versionDetailReleaseTime) m_versionDetailReleaseTime->hide();
+    if (m_versionDetailSummary) m_versionDetailSummary->hide();
+    if (m_versionDetailInstallButton) m_versionDetailInstallButton->setEnabled(false);
 
     connect(m_refreshDownloadVersionsButton, &QPushButton::clicked, this, [this]() {
         animateButton(m_refreshDownloadVersionsButton);
@@ -1131,12 +1242,25 @@ QWidget *MainWindow::buildDownloadVersionsPage()
 
     connect(m_downloadVersionTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
         if (!m_allDownloadVersions.isEmpty()) {
-            populateDownloadVersionsTable();
+            populateDownloadVersionList();
         }
     });
 
-    connect(m_downloadSelectedVersionButton, &QPushButton::clicked, this, [this] {
-        animateButton(m_downloadSelectedVersionButton);
+    connect(m_downloadVersionSearchEdit, &QLineEdit::textChanged, this, [this]() {
+        if (!m_allDownloadVersions.isEmpty()) {
+            populateDownloadVersionList();
+        }
+    });
+
+    connect(m_downloadVersionList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *, QListWidgetItem *) {
+        updateVersionDetailPanel();
+    });
+
+    connect(m_downloadVersionList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *) {
+        downloadSelectedVersion();
+    });
+
+    connect(m_versionDetailInstallButton, &QPushButton::clicked, this, [this]() {
         downloadSelectedVersion();
     });
 
@@ -2251,7 +2375,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.2", infoBox);
+    auto *versionLabel = new QLabel("1.3", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -4874,54 +4998,184 @@ void MainWindow::refreshDownloadVersions()
         showError(this, error);
         return;
     }
-    
-    populateDownloadVersionsTable();
-    appendLog("已获取版本列表");
+
+    populateDownloadVersionList();
+    appendLog(QString("已获取版本清单，共 %1 个版本").arg(m_allDownloadVersions.size()));
+}
+
+QString MainWindow::versionTypeDisplayName(const QString &type)
+{
+    const QString t = type.trimmed().toLower();
+    if (t == "release") return QStringLiteral("正式版");
+    if (t == "snapshot") return QStringLiteral("快照版");
+    if (t == "pending") return QStringLiteral("待定版");
+    if (t == "old_beta") return QStringLiteral("远古 Beta");
+    if (t == "old_alpha") return QStringLiteral("远古 Alpha");
+    if (t.isEmpty()) return QStringLiteral("未知");
+    return type;
+}
+
+QIcon MainWindow::versionIconFor(const QString &versionId, const QString &versionType)
+{
+    const QString id = versionId.toLower();
+    const QString t = versionType.trimmed().toLower();
+
+    static const QStringList aprilFoolsIds = {
+        "15w14a", "16w14a", "1.14.3-pre3", "20w14infinite", "21w13a",
+        "22w13oneblockatatime", "23w13a_or_b", "24w13a",
+        "3d shareware v1.34", "snapshot 20w14infinite"
+    };
+    for (const QString &af : aprilFoolsIds) {
+        if (id == af || id.contains(af)) {
+            return QIcon(":/assets/version-icons/april_fools.png");
+        }
+    }
+    if (id.contains("legacyfabric")) return QIcon(":/assets/version-icons/legacyfabric.png");
+    if (id.contains("fabric")) return QIcon(":/assets/version-icons/fabric.png");
+    if (id.contains("neoforge")) return QIcon(":/assets/version-icons/neoforge.png");
+    if (id.contains("forge")) return QIcon(":/assets/version-icons/forge.png");
+    if (id.contains("quilt")) return QIcon(":/assets/version-icons/quilt.png");
+    if (id.contains("optifine")) return QIcon(":/assets/version-icons/optifine.png");
+    if (id.contains("cleanroom")) return QIcon(":/assets/version-icons/cleanroom.png");
+
+    if (t == "old_alpha") return QIcon(":/assets/version-icons/command.png");
+    if (t == "old_beta") return QIcon(":/assets/version-icons/furnace.png");
+    if (t == "snapshot" || t == "pending") return QIcon(":/assets/version-icons/craft_table.png");
+    if (t == "release") return QIcon(":/assets/version-icons/grass.png");
+    return QIcon(":/assets/version-icons/chest.png");
+}
+
+void MainWindow::populateDownloadVersionList()
+{
+    if (!m_downloadVersionList) return;
+
+    const QString selectedType = m_downloadVersionTypeCombo
+        ? m_downloadVersionTypeCombo->currentData().toString()
+        : QStringLiteral("all");
+    const QString keyword = m_downloadVersionSearchEdit
+        ? m_downloadVersionSearchEdit->text().trimmed()
+        : QString();
+
+    const QJsonArray filteredVersions = m_core.filterVersionsByType(m_allDownloadVersions, selectedType);
+
+    QString previousId;
+    if (auto *cur = m_downloadVersionList->currentItem()) {
+        previousId = cur->data(Qt::UserRole + 1).toString();
+    }
+
+    const QSignalBlocker blocker(m_downloadVersionList);
+    m_downloadVersionList->clear();
+
+    int matchCount = 0;
+    for (const QJsonValue &value : filteredVersions) {
+        const QJsonObject object = value.toObject();
+        const QString versionId = object.value("id").toString();
+        if (versionId.isEmpty()) continue;
+        if (!keyword.isEmpty() && !versionId.contains(keyword, Qt::CaseInsensitive)) continue;
+
+        const QString versionType = object.value("type").toString();
+        const QString releaseTime = object.value("releaseTime").toString();
+
+        auto *item = new QListWidgetItem(m_downloadVersionList);
+        item->setText(versionId);
+        item->setIcon(versionIconFor(versionId, versionType));
+        item->setData(Qt::UserRole, QJsonDocument(object).toJson(QJsonDocument::Compact));
+        item->setData(Qt::UserRole + 1, versionId);
+        item->setToolTip(QString("%1 · %2 · %3")
+                             .arg(versionId, versionTypeDisplayName(versionType), releaseTime));
+        ++matchCount;
+    }
+
+    if (!previousId.isEmpty()) {
+        for (int i = 0; i < m_downloadVersionList->count(); ++i) {
+            if (m_downloadVersionList->item(i)->data(Qt::UserRole + 1).toString() == previousId) {
+                m_downloadVersionList->setCurrentRow(i);
+                break;
+            }
+        }
+    }
+    if (!m_downloadVersionList->currentItem() && m_downloadVersionList->count() > 0) {
+        m_downloadVersionList->setCurrentRow(0);
+    }
+
+    updateVersionDetailPanel();
+    appendLog(QString("已刷新下载版本列表，共 %1 个版本").arg(matchCount));
 }
 
 void MainWindow::populateDownloadVersionsTable()
 {
-    const QString selectedType = m_downloadVersionTypeCombo->currentData().toString();
-    const QJsonArray filteredVersions = m_core.filterVersionsByType(m_allDownloadVersions, selectedType);
-    
-    m_downloadVersionsTable->setRowCount(0);
-    
-    for (const QJsonValue &value : filteredVersions) {
-        const QJsonObject object = value.toObject();
-        const QString versionId = object.value("id").toString();
-        const QString versionType = object.value("type").toString();
-        const QString releaseTime = object.value("releaseTime").toString();
-        
-        const int row = m_downloadVersionsTable->rowCount();
-        m_downloadVersionsTable->insertRow(row);
-        
-        auto *idItem = new QTableWidgetItem(versionId);
-        idItem->setData(Qt::UserRole, QJsonDocument(object).toJson(QJsonDocument::Compact));
-        m_downloadVersionsTable->setItem(row, 0, idItem);
-        
-        m_downloadVersionsTable->setItem(row, 1, new QTableWidgetItem(versionType));
-        m_downloadVersionsTable->setItem(row, 2, new QTableWidgetItem(releaseTime));
+    populateDownloadVersionList();
+}
+
+void MainWindow::updateVersionDetailPanel()
+{
+    if (!m_versionDetailPanel) return;
+
+    QListWidgetItem *item = m_downloadVersionList ? m_downloadVersionList->currentItem() : nullptr;
+    const bool hasSelection = (item != nullptr);
+
+    if (m_versionDetailPlaceholder) m_versionDetailPlaceholder->setVisible(!hasSelection);
+    if (m_versionDetailIcon) m_versionDetailIcon->setVisible(hasSelection);
+    if (m_versionDetailTitle) m_versionDetailTitle->setVisible(hasSelection);
+    if (m_versionDetailType) m_versionDetailType->setVisible(hasSelection);
+    if (m_versionDetailReleaseTime) m_versionDetailReleaseTime->setVisible(hasSelection);
+    if (m_versionDetailSummary) m_versionDetailSummary->setVisible(hasSelection);
+    if (m_versionDetailInstallButton) m_versionDetailInstallButton->setEnabled(hasSelection);
+
+    if (!hasSelection) {
+        m_selectedDownloadVersion = QJsonObject();
+        return;
     }
-    
-    appendLog(QString("已刷新下载版本列表，共 %1 个").arg(filteredVersions.size()));
+
+    const QByteArray data = item->data(Qt::UserRole).toByteArray();
+    m_selectedDownloadVersion = QJsonDocument::fromJson(data).object();
+
+    const QString versionId = m_selectedDownloadVersion.value("id").toString();
+    const QString versionType = m_selectedDownloadVersion.value("type").toString();
+    const QString releaseTime = m_selectedDownloadVersion.value("releaseTime").toString();
+
+    if (m_versionDetailIcon) {
+        m_versionDetailIcon->setPixmap(versionIconFor(versionId, versionType).pixmap(64, 64));
+    }
+    if (m_versionDetailTitle) {
+        m_versionDetailTitle->setText(versionId);
+    }
+    if (m_versionDetailType) {
+        m_versionDetailType->setText(QString("类型：%1  （%2）")
+                                         .arg(versionTypeDisplayName(versionType), versionType));
+    }
+    if (m_versionDetailReleaseTime) {
+        QString pretty = releaseTime;
+        if (!pretty.isEmpty()) {
+            pretty.replace("T", " ");
+            if (pretty.endsWith("Z")) pretty.chop(1);
+        }
+        m_versionDetailReleaseTime->setText(QString("📅 发布时间：%1").arg(pretty.isEmpty() ? QStringLiteral("未知") : pretty));
+    }
+    if (m_versionDetailSummary) {
+        m_versionDetailSummary->setText(
+            QStringLiteral("版本 ID：%1\n将安装到 .minecraft/versions/%2/（支持自定义实例名称）。")
+                .arg(versionId, versionId));
+    }
 }
 
 void MainWindow::downloadSelectedVersion()
 {
-    const int row = m_downloadVersionsTable->currentRow();
-    if (row < 0) {
-        showError(this, "请先选择要下载的版本！");
+    QJsonObject versionObj = m_selectedDownloadVersion;
+    if (versionObj.isEmpty()) {
+        if (auto *item = m_downloadVersionList ? m_downloadVersionList->currentItem() : nullptr) {
+            versionObj = QJsonDocument::fromJson(item->data(Qt::UserRole).toByteArray()).object();
+        }
+    }
+    if (versionObj.isEmpty()) {
+        showError(this, "请先在左侧选择要下载的版本");
         return;
     }
-    
-    QTableWidgetItem *item = m_downloadVersionsTable->item(row, 0);
-    const QByteArray data = item->data(Qt::UserRole).toByteArray();
-    const QJsonObject versionObj = QJsonDocument::fromJson(data).object();
-    
+
     if (!saveUiToConfig()) {
         return;
     }
-    
+
     showVersionInstallDialog(versionObj, this);
     refreshInstalledVersionsUi();
 }

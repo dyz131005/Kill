@@ -1,6 +1,32 @@
-﻿<RCC>
+<RCC>
     <qresource prefix="/">
         <file>assets/style.qss</file>
         <file>icon.ico</file>
+        <file>assets/version-icons/grass.png</file>
+        <file>assets/version-icons/grass@2x.png</file>
+        <file>assets/version-icons/chest.png</file>
+        <file>assets/version-icons/chest@2x.png</file>
+        <file>assets/version-icons/furnace.png</file>
+        <file>assets/version-icons/furnace@2x.png</file>
+        <file>assets/version-icons/craft_table.png</file>
+        <file>assets/version-icons/craft_table@2x.png</file>
+        <file>assets/version-icons/command.png</file>
+        <file>assets/version-icons/command@2x.png</file>
+        <file>assets/version-icons/april_fools.png</file>
+        <file>assets/version-icons/april_fools@2x.png</file>
+        <file>assets/version-icons/fabric.png</file>
+        <file>assets/version-icons/fabric@2x.png</file>
+        <file>assets/version-icons/forge.png</file>
+        <file>assets/version-icons/forge@2x.png</file>
+        <file>assets/version-icons/neoforge.png</file>
+        <file>assets/version-icons/neoforge@2x.png</file>
+        <file>assets/version-icons/quilt.png</file>
+        <file>assets/version-icons/quilt@2x.png</file>
+        <file>assets/version-icons/legacyfabric.png</file>
+        <file>assets/version-icons/legacyfabric@2x.png</file>
+        <file>assets/version-icons/optifine.png</file>
+        <file>assets/version-icons/optifine@2x.png</file>
+        <file>assets/version-icons/cleanroom.png</file>
+        <file>assets/version-icons/cleanroom@2x.png</file>
     </qresource>
 </RCC>
