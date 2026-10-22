@@ -93,7 +93,10 @@ private:
     void refreshDownloadVersions();
     void populateDownloadVersionsTable();
     void populateDownloadVersionList();
-    void updateVersionDetailPanel();
+    QWidget *buildVersionInstallPage();
+    void showVersionInstallPage(const QJsonObject &versionObj);
+    void leaveVersionInstallPage();
+    void performVersionInstall();
     void downloadSelectedVersion();
     static QIcon versionIconFor(const QString &versionId, const QString &versionType);
     static QString versionTypeDisplayName(const QString &type);
@@ -182,16 +185,19 @@ private:
     QPushButton *m_refreshDownloadVersionsButton = nullptr;
     QPushButton *m_downloadSelectedVersionButton = nullptr;
 
-    // HMCL 风格：右侧版本详情卡片
-    QLabel *m_versionDetailIcon = nullptr;
-    QLabel *m_versionDetailTitle = nullptr;
-    QLabel *m_versionDetailType = nullptr;
-    QLabel *m_versionDetailReleaseTime = nullptr;
-    QLabel *m_versionDetailSummary = nullptr;
-    QLabel *m_versionDetailPlaceholder = nullptr;
-    QWidget *m_versionDetailPanel = nullptr;
-    QPushButton *m_versionDetailInstallButton = nullptr;
+    // HMCL 风格：版本页内嵌安装向导（在主窗口内切换，不用独立窗口）
+    QStackedWidget *m_versionFlowStack = nullptr;
+    QStackedWidget *m_versionCenterStack = nullptr;
+    QWidget *m_versionListPage = nullptr;
+    QWidget *m_versionInstallPage = nullptr;
+    QLabel *m_versionInstallIcon = nullptr;
+    QLabel *m_versionInstallTitle = nullptr;
+    QLabel *m_versionInstallType = nullptr;
+    QLabel *m_versionInstallReleaseTime = nullptr;
+    QLineEdit *m_versionInstallNameEdit = nullptr;
+    QPushButton *m_versionInstallConfirmButton = nullptr;
     QJsonObject m_selectedDownloadVersion;
+    QJsonObject m_installingVersion;
 
     QJsonArray m_allDownloadVersions;
 

@@ -1,0 +1,1 @@
+release: v1.4 - rebuild version download page to match HMCL UI, inline install flow
