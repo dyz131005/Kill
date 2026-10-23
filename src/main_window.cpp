@@ -1234,10 +1234,11 @@ QWidget *MainWindow::buildVersionInstallPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
 
+    // ===== 顶部：返回 + 标题 =====
     auto *topRow = new QHBoxLayout();
     topRow->setSpacing(10);
 
-    auto *backButton = new QPushButton("←", page);
+    auto *backButton = new QPushButton(QString::fromUtf8("\u2190"), page);
     backButton->setFixedSize(38, 36);
     backButton->setCursor(Qt::PointingHandCursor);
     backButton->setToolTip("返回版本列表");
@@ -1257,71 +1258,117 @@ QWidget *MainWindow::buildVersionInstallPage()
     topRow->addStretch();
     layout->addLayout(topRow);
 
+    // ===== 实例名称卡片（对应 HMCL 顶部 versionNamePane）=====
+    auto *nameCard = new QFrame(page);
+    nameCard->setObjectName("installerNameCard");
+    nameCard->setStyleSheet(
+        "#installerNameCard {"
+        "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;"
+        "}"
+    );
+    auto *nameRow = new QHBoxLayout(nameCard);
+    nameRow->setContentsMargins(20, 16, 20, 16);
+    nameRow->setSpacing(12);
+
+    auto *nameLabel = new QLabel("实例名称", nameCard);
+    nameLabel->setStyleSheet("font-size: 13px; color: #374151;");
+    nameRow->addWidget(nameLabel);
+
+    m_versionInstallNameEdit = new QLineEdit(nameCard);
+    m_versionInstallNameEdit->setPlaceholderText("请输入实例名称");
+    m_versionInstallNameEdit->setStyleSheet(
+        "QLineEdit {"
+        "  padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;"
+        "  background-color: #f9fafb; font-size: 13px; color: #1f2937;"
+        "}"
+        "QLineEdit:focus { border: 1px solid #3b82f6; background-color: #ffffff; }"
+    );
+    nameRow->addWidget(m_versionInstallNameEdit, 1);
+
+    auto *clearNameButton = new QPushButton(QString::fromUtf8("\u2715"), nameCard);
+    clearNameButton->setFixedSize(30, 30);
+    clearNameButton->setCursor(Qt::PointingHandCursor);
+    clearNameButton->setToolTip("清空名称");
+    clearNameButton->setStyleSheet(
+        "QPushButton { background-color: transparent; border: none; color: #6b7280; font-size: 14px; }"
+        "QPushButton:hover { color: #111827; }"
+    );
+    connect(clearNameButton, &QPushButton::clicked, this, [this]() {
+        if (m_versionInstallNameEdit) m_versionInstallNameEdit->clear();
+    });
+    nameRow->addWidget(clearNameButton);
+
+    auto *resetNameButton = new QPushButton(QString::fromUtf8("\u21ba"), nameCard);
+    resetNameButton->setFixedSize(30, 30);
+    resetNameButton->setCursor(Qt::PointingHandCursor);
+    resetNameButton->setToolTip("恢复默认名称");
+    resetNameButton->setStyleSheet(
+        "QPushButton { background-color: transparent; border: none; color: #6b7280; font-size: 15px; }"
+        "QPushButton:hover { color: #111827; }"
+    );
+    connect(resetNameButton, &QPushButton::clicked, this, [this]() {
+        if (!m_versionInstallNameEdit) return;
+        QString base = m_installerGameVersion;
+        for (auto it = m_installerChosenVersions.constBegin(); it != m_installerChosenVersions.constEnd(); ++it) {
+            base += "-" + it.key();
+        }
+        m_versionInstallNameEdit->setText(base);
+    });
+    nameRow->addWidget(resetNameButton);
+
+    layout->addWidget(nameCard);
+
     auto *infoCard = new QFrame(page);
-    infoCard->setObjectName("versionInstallCard");
+    infoCard->setObjectName("installerInfoCard");
     infoCard->setStyleSheet(
-        "#versionInstallCard {"
-        "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;"
+        "#installerInfoCard {"
+        "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;"
         "}"
     );
     auto *infoLayout = new QHBoxLayout(infoCard);
-    infoLayout->setContentsMargins(20, 18, 20, 18);
-    infoLayout->setSpacing(18);
+    infoLayout->setContentsMargins(20, 14, 20, 14);
+    infoLayout->setSpacing(14);
 
     m_versionInstallIcon = new QLabel(infoCard);
-    m_versionInstallIcon->setFixedSize(64, 64);
+    m_versionInstallIcon->setFixedSize(40, 40);
     m_versionInstallIcon->setScaledContents(true);
-    infoLayout->addWidget(m_versionInstallIcon, 0, Qt::AlignTop);
+    infoLayout->addWidget(m_versionInstallIcon, 0, Qt::AlignVCenter);
 
     auto *infoTextLayout = new QVBoxLayout();
-    infoTextLayout->setSpacing(6);
+    infoTextLayout->setSpacing(2);
     m_versionInstallTitle = new QLabel(infoCard);
-    m_versionInstallTitle->setStyleSheet("font-size: 22px; font-weight: 700; color: #111827;");
-    m_versionInstallTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_versionInstallTitle->setStyleSheet("font-size: 16px; font-weight: 700; color: #111827;");
     infoTextLayout->addWidget(m_versionInstallTitle);
     m_versionInstallType = new QLabel(infoCard);
-    m_versionInstallType->setStyleSheet("font-size: 13px; color: #6b7280;");
+    m_versionInstallType->setStyleSheet("font-size: 12px; color: #6b7280;");
     infoTextLayout->addWidget(m_versionInstallType);
     m_versionInstallReleaseTime = new QLabel(infoCard);
-    m_versionInstallReleaseTime->setStyleSheet("font-size: 13px; color: #6b7280;");
+    m_versionInstallReleaseTime->setStyleSheet("font-size: 12px; color: #6b7280;");
     infoTextLayout->addWidget(m_versionInstallReleaseTime);
     infoLayout->addLayout(infoTextLayout, 1);
 
     layout->addWidget(infoCard);
 
-    auto *formCard = new QFrame(page);
-    formCard->setObjectName("versionInstallFormCard");
-    formCard->setStyleSheet(
-        "#versionInstallFormCard {"
-        "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;"
-        "}"
-    );
-    auto *formLayout = new QVBoxLayout(formCard);
-    formLayout->setContentsMargins(20, 18, 20, 18);
-    formLayout->setSpacing(10);
+    auto *loaderTitle = new QLabel("可选安装的加载器", page);
+    loaderTitle->setStyleSheet("font-size: 13px; font-weight: 600; color: #374151; margin-top: 4px;");
+    layout->addWidget(loaderTitle);
 
-    auto *nameLabel = new QLabel("实例名称", formCard);
-    nameLabel->setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;");
-    formLayout->addWidget(nameLabel);
+    auto *scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setStyleSheet("QScrollArea { background: transparent; }");
 
-    m_versionInstallNameEdit = new QLineEdit(formCard);
-    m_versionInstallNameEdit->setPlaceholderText("请输入实例名称");
-    m_versionInstallNameEdit->setStyleSheet(
-        "QLineEdit {"
-        "  padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 10px;"
-        "  background-color: #f9fafb; font-size: 13px; color: #1f2937;"
-        "}"
-        "QLineEdit:focus { border: 1px solid #3b82f6; background-color: #ffffff; }"
-    );
-    formLayout->addWidget(m_versionInstallNameEdit);
+    m_installerCardContainer = new QWidget(scrollArea);
+    m_installerCardContainer->setStyleSheet("QWidget { background: transparent; }");
+    auto *grid = new QGridLayout(m_installerCardContainer);
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setHorizontalSpacing(16);
+    grid->setVerticalSpacing(16);
+    grid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    grid->setObjectName("installerCardGrid");
 
-    auto *noteLabel = new QLabel("下载完成后，游戏文件将保存到 .minecraft/versions/<实例名称>/", formCard);
-    noteLabel->setWordWrap(true);
-    noteLabel->setStyleSheet("font-size: 12px; color: #6b7280;");
-    formLayout->addWidget(noteLabel);
-
-    layout->addWidget(formCard);
-    layout->addStretch();
+    scrollArea->setWidget(m_installerCardContainer);
+    layout->addWidget(scrollArea, 1);
 
     auto *btnRow = new QHBoxLayout();
     btnRow->addStretch();
@@ -1329,25 +1376,25 @@ QWidget *MainWindow::buildVersionInstallPage()
 
     auto *cancelButton = new QPushButton("取消", page);
     cancelButton->setFixedWidth(100);
-    cancelButton->setFixedHeight(38);
+    cancelButton->setFixedHeight(40);
     cancelButton->setCursor(Qt::PointingHandCursor);
     cancelButton->setStyleSheet(
         "QPushButton {"
         "  background-color: #f3f4f6; color: #374151; border: 1px solid #e5e7eb;"
-        "  border-radius: 10px; font-size: 13px; font-weight: 600;"
+        "  border-radius: 8px; font-size: 13px; font-weight: 600;"
         "}"
         "QPushButton:hover { background-color: #e5e7eb; }"
     );
     btnRow->addWidget(cancelButton);
 
-    m_versionInstallConfirmButton = new QPushButton("确认安装", page);
-    m_versionInstallConfirmButton->setFixedWidth(120);
-    m_versionInstallConfirmButton->setFixedHeight(38);
+    m_versionInstallConfirmButton = new QPushButton("安装", page);
+    m_versionInstallConfirmButton->setFixedWidth(100);
+    m_versionInstallConfirmButton->setFixedHeight(40);
     m_versionInstallConfirmButton->setCursor(Qt::PointingHandCursor);
     m_versionInstallConfirmButton->setStyleSheet(
         "QPushButton {"
         "  background-color: #3b82f6; color: #ffffff; border: none;"
-        "  border-radius: 10px; font-size: 13px; font-weight: 600;"
+        "  border-radius: 8px; font-size: 13px; font-weight: 600;"
         "}"
         "QPushButton:hover { background-color: #2563eb; }"
         "QPushButton:pressed { background-color: #1d4ed8; }"
@@ -1361,6 +1408,249 @@ QWidget *MainWindow::buildVersionInstallPage()
     connect(m_versionInstallConfirmButton, &QPushButton::clicked, this, [this]() { performVersionInstall(); });
 
     return page;
+}
+
+QList<QPair<QString, QString>> MainWindow::installerCandidatesFor(const QString &gameVersion)
+{
+    // 返回 (loaderId, 显示名) 列表，按 HMCL 的版本裁剪规则
+    const QString v = gameVersion.trimmed();
+
+    if (v == QStringLiteral("1.12.2")) {
+        return {
+            {"forge", "Forge"},
+            {"cleanroom", "Cleanroom"},
+            {"liteloader", "LiteLoader"},
+            {"legacyfabric", "LegacyFabric"},
+            {"optifine", "OptiFine"},
+        };
+    }
+
+    // 判断是否 <= 1.13.2
+    bool atMost1132 = false;
+    const QStringList parts = v.split('.');
+    if (parts.size() >= 2) {
+        bool okMajor = false, okMinor = false;
+        const int major = parts.at(0).toInt(&okMajor);
+        const int minor = parts.at(1).toInt(&okMinor);
+        if (okMajor && okMinor) {
+            if (major < 1) atMost1132 = true;
+            else if (major == 1 && minor <= 13) atMost1132 = true;
+        }
+    }
+
+    if (atMost1132) {
+        return {
+            {"forge", "Forge"},
+            {"liteloader", "LiteLoader"},
+            {"optifine", "OptiFine"},
+            {"legacyfabric", "LegacyFabric"},
+        };
+    }
+
+    return {
+        {"forge", "Forge"},
+        {"neoforge", "NeoForge"},
+        {"fabric", "Fabric"},
+        {"quilt", "Quilt"},
+        {"optifine", "OptiFine"},
+    };
+}
+
+void MainWindow::rebuildInstallerCards()
+{
+    if (!m_installerCardContainer) return;
+
+    auto *grid = qobject_cast<QGridLayout *>(m_installerCardContainer->layout());
+    if (!grid) return;
+
+    while (QLayoutItem *child = grid->takeAt(0)) {
+        if (QWidget *w = child->widget()) w->deleteLater();
+        delete child;
+    }
+
+    const QList<QPair<QString, QString>> candidates = installerCandidatesFor(m_installerGameVersion);
+
+    static const QHash<QString, QString> iconMap = {
+        {"forge", ":/assets/version-icons/forge.png"},
+        {"neoforge", ":/assets/version-icons/neoforge.png"},
+        {"fabric", ":/assets/version-icons/fabric.png"},
+        {"quilt", ":/assets/version-icons/quilt.png"},
+        {"optifine", ":/assets/version-icons/optifine.png"},
+        {"liteloader", ":/assets/version-icons/chest.png"},
+        {"cleanroom", ":/assets/version-icons/cleanroom.png"},
+        {"legacyfabric", ":/assets/version-icons/legacyfabric.png"},
+    };
+
+    int row = 0;
+    int col = 0;
+    const int columns = 4;
+
+    for (const auto &pair : candidates) {
+        const QString loaderId = pair.first;
+        const QString loaderName = pair.second;
+        const QString iconPath = iconMap.value(loaderId, ":/assets/version-icons/chest.png");
+
+        auto *card = new QFrame(m_installerCardContainer);
+        card->setObjectName("installerCardItem");
+        card->setFixedWidth(180);
+        card->setFixedHeight(126);
+        card->setCursor(Qt::PointingHandCursor);
+        card->setStyleSheet(
+            "#installerCardItem {"
+            "  background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 4px;"
+            "}"
+            "#installerCardItem:hover { border-color: #3b82f6; }"
+        );
+
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(12, 10, 12, 10);
+        cardLayout->setSpacing(4);
+        cardLayout->setAlignment(Qt::AlignCenter);
+
+        auto *iconLabel = new QLabel(card);
+        iconLabel->setFixedSize(32, 32);
+        iconLabel->setScaledContents(true);
+        iconLabel->setPixmap(QIcon(iconPath).pixmap(32, 32));
+        iconLabel->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(iconLabel, 0, Qt::AlignHCenter);
+
+        auto *nameLabel = new QLabel(loaderName, card);
+        nameLabel->setStyleSheet("font-size: 14px; font-weight: 600; color: #111827;");
+        nameLabel->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(nameLabel, 0, Qt::AlignHCenter);
+
+        const QString chosen = m_installerChosenVersions.value(loaderId);
+        auto *statusLabel = new QLabel(card);
+        statusLabel->setAlignment(Qt::AlignCenter);
+        statusLabel->setWordWrap(true);
+        if (chosen.isEmpty()) {
+            statusLabel->setText("未安装");
+            statusLabel->setStyleSheet("font-size: 11px; color: #9ca3af;");
+        } else {
+            statusLabel->setText(chosen);
+            statusLabel->setStyleSheet("font-size: 11px; color: #2563eb; font-weight: 600;");
+        }
+        cardLayout->addWidget(statusLabel, 0, Qt::AlignHCenter);
+
+        auto *clickButton = new QPushButton(card);
+        clickButton->setFlat(true);
+        clickButton->setCursor(Qt::PointingHandCursor);
+        clickButton->setStyleSheet("QPushButton { background: transparent; border: none; }");
+        clickButton->setGeometry(0, 0, 180, 126);
+        clickButton->lower();
+        clickButton->raise();
+
+        const QString lid = loaderId;
+        const QString lname = loaderName;
+        connect(clickButton, &QPushButton::clicked, this, [this, lid, lname]() {
+            openInstallerVersionPicker(lid, lname);
+        });
+
+        grid->addWidget(card, row, col, Qt::AlignLeft | Qt::AlignTop);
+        ++col;
+        if (col >= columns) {
+            col = 0;
+            ++row;
+        }
+    }
+
+    grid->setColumnStretch(columns, 1);
+    grid->setRowStretch(row + 1, 1);
+}
+
+void MainWindow::openInstallerVersionPicker(const QString &loaderId, const QString &loaderName)
+{
+    if (m_installerGameVersion.isEmpty()) {
+        showError(this, "尚未选择游戏版本");
+        return;
+    }
+
+    QString error;
+    const QJsonArray arr = m_core.fetchLoaderVersions(m_installerGameVersion, loaderId, &error);
+    QStringList versions;
+    for (const QJsonValue &v : arr) {
+        const QString ver = v.toObject().value("version").toString();
+        if (!ver.isEmpty()) versions.append(ver);
+    }
+
+    if (!error.isEmpty() || versions.isEmpty()) {
+        showError(this, QString("获取 %1 版本列表失败：%2")
+                             .arg(loaderName, error.isEmpty() ? QStringLiteral("没有可用版本") : error));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString("选择 %1 版本").arg(loaderName));
+    dialog.resize(420, 460);
+    dialog.setStyleSheet("QDialog { background-color: #f9fafb; }");
+
+    auto *dlgLayout = new QVBoxLayout(&dialog);
+    dlgLayout->setContentsMargins(16, 16, 16, 16);
+    dlgLayout->setSpacing(10);
+
+    auto *tip = new QLabel(QString("游戏版本 %1  ·  %2").arg(m_installerGameVersion, loaderName), &dialog);
+    tip->setStyleSheet("font-size: 13px; color: #6b7280;");
+    dlgLayout->addWidget(tip);
+
+    auto *list = new QListWidget(&dialog);
+    list->addItems(versions);
+    list->setStyleSheet(
+        "QListWidget { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 4px; }"
+        "QListWidget::item { padding: 8px 10px; border-radius: 6px; color: #111827; }"
+        "QListWidget::item:hover { background-color: #f3f4f6; }"
+        "QListWidget::item:selected { background-color: rgba(59, 130, 246, 0.14); color: #1d4ed8; }"
+    );
+    dlgLayout->addWidget(list, 1);
+
+    auto *btnRow = new QHBoxLayout();
+    btnRow->addStretch();
+
+    auto *clearBtn = new QPushButton("移除选择", &dialog);
+    clearBtn->setFixedWidth(100);
+    clearBtn->setStyleSheet(
+        "QPushButton { background-color: #ffffff; color: #dc2626; border: 1px solid #fecaca;"
+        "  border-radius: 8px; padding: 8px 0; font-weight: 600; }"
+        "QPushButton:hover { background-color: #fef2f2; }"
+    );
+    btnRow->addWidget(clearBtn);
+
+    auto *cancelBtn = new QPushButton("取消", &dialog);
+    cancelBtn->setFixedWidth(90);
+    cancelBtn->setStyleSheet(
+        "QPushButton { background-color: #f3f4f6; color: #374151; border: 1px solid #e5e7eb;"
+        "  border-radius: 8px; padding: 8px 0; font-weight: 600; }"
+        "QPushButton:hover { background-color: #e5e7eb; }"
+    );
+    btnRow->addWidget(cancelBtn);
+
+    auto *okBtn = new QPushButton("确定", &dialog);
+    okBtn->setFixedWidth(90);
+    okBtn->setStyleSheet(
+        "QPushButton { background-color: #3b82f6; color: #ffffff; border: none;"
+        "  border-radius: 8px; padding: 8px 0; font-weight: 600; }"
+        "QPushButton:hover { background-color: #2563eb; }"
+    );
+    btnRow->addWidget(okBtn);
+    dlgLayout->addLayout(btnRow);
+
+    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(clearBtn, &QPushButton::clicked, this, [this, &dialog, loaderId]() {
+        m_installerChosenVersions.remove(loaderId);
+        rebuildInstallerCards();
+        dialog.reject();
+    });
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    QListWidgetItem *item = list->currentItem();
+    if (!item) return;
+
+    m_installerChosenVersions.insert(loaderId, item->text());
+    rebuildInstallerCards();
+    appendLog(QString("已选择加载器 %1 %2（游戏版本 %3）")
+                  .arg(loaderId, item->text(), m_installerGameVersion));
 }
 
 void MainWindow::showVersionInstallPage(const QJsonObject &versionObj)
@@ -1393,6 +1683,11 @@ void MainWindow::showVersionInstallPage(const QJsonObject &versionObj)
     if (m_versionInstallNameEdit) {
         m_versionInstallNameEdit->setText(versionId);
     }
+
+    // 设置当前安装的游戏版本并重建加载器卡片（对应 HMCL 的 InstallersPage）
+    m_installerGameVersion = versionId;
+    m_installerChosenVersions.clear();
+    rebuildInstallerCards();
 
     m_versionFlowStack->setCurrentWidget(m_versionInstallPage);
 }
@@ -2537,7 +2832,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.4", infoBox);
+    auto *versionLabel = new QLabel("1.5", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -2805,6 +3100,10 @@ void MainWindow::refreshInstalledVersionsUi()
         }
     }
     syncSelectedVersion(selected);
+
+    if (m_manageInstanceList) {
+        refreshManageInstanceList();
+    }
 }
 
 void MainWindow::syncSelectedVersion(const QString &versionId, QComboBox *source)
@@ -2823,6 +3122,15 @@ void MainWindow::syncSelectedVersion(const QString &versionId, QComboBox *source
         const int index = m_manageVersionCombo->findText(versionId);
         if (index >= 0) {
             m_manageVersionCombo->setCurrentIndex(index);
+        }
+    }
+    if (m_manageInstanceList) {
+        const QSignalBlocker blocker(m_manageInstanceList);
+        for (int i = 0; i < m_manageInstanceList->count(); ++i) {
+            if (m_manageInstanceList->item(i)->data(Qt::UserRole).toString() == versionId) {
+                m_manageInstanceList->setCurrentRow(i);
+                break;
+            }
         }
     }
 }
@@ -5303,6 +5611,95 @@ void MainWindow::downloadSelectedVersion()
     showVersionInstallPage(versionObj);
 }
 
+QString MainWindow::manageInstanceIconFor(const QString &versionId)
+{
+    const QString id = versionId.toLower();
+    if (id.contains("legacyfabric")) return ":/assets/version-icons/legacyfabric.png";
+    if (id.contains("fabric")) return ":/assets/version-icons/fabric.png";
+    if (id.contains("neoforge")) return ":/assets/version-icons/neoforge.png";
+    if (id.contains("forge")) return ":/assets/version-icons/forge.png";
+    if (id.contains("quilt")) return ":/assets/version-icons/quilt.png";
+    if (id.contains("optifine")) return ":/assets/version-icons/optifine.png";
+    if (id.contains("cleanroom")) return ":/assets/version-icons/cleanroom.png";
+    return ":/assets/version-icons/grass.png";
+}
+
+void MainWindow::refreshManageInstanceList()
+{
+    if (!m_manageInstanceList) return;
+
+    const QString keyword = m_manageSearchEdit ? m_manageSearchEdit->text().trimmed() : QString();
+    const QStringList installed = m_core.listInstalledVersions();
+
+    const QSignalBlocker blocker(m_manageInstanceList);
+    m_manageInstanceList->clear();
+
+    const QString currentManaged = currentManagedVersion();
+
+    for (const QString &versionId : installed) {
+        if (!keyword.isEmpty() && !versionId.contains(keyword, Qt::CaseInsensitive)) continue;
+
+        auto *item = new QListWidgetItem(m_manageInstanceList);
+        item->setData(Qt::UserRole, versionId);
+        item->setSizeHint(QSize(0, 60));
+
+        auto *row = new QWidget(m_manageInstanceList);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(12, 8, 12, 8);
+        rowLayout->setSpacing(12);
+
+        auto *iconLabel = new QLabel(row);
+        iconLabel->setFixedSize(32, 32);
+        iconLabel->setScaledContents(true);
+        iconLabel->setPixmap(QIcon(manageInstanceIconFor(versionId)).pixmap(32, 32));
+        rowLayout->addWidget(iconLabel);
+
+        auto *textLayout = new QVBoxLayout();
+        textLayout->setSpacing(2);
+
+        auto *titleLabel = new QLabel(versionId, row);
+        titleLabel->setStyleSheet("font-size: 14px; font-weight: 600; color: #111827;");
+        textLayout->addWidget(titleLabel);
+
+        auto *subLabel = new QLabel(
+            versionId == currentManaged ? QStringLiteral("当前选中") : QStringLiteral("已安装"),
+            row);
+        subLabel->setStyleSheet(versionId == currentManaged
+                                    ? "font-size: 12px; color: #2563eb; font-weight: 600;"
+                                    : "font-size: 12px; color: #9ca3af;");
+        textLayout->addWidget(subLabel);
+
+        rowLayout->addLayout(textLayout, 1);
+
+        auto *openButton = new QPushButton(QString::fromUtf8("\u2192"), row);
+        openButton->setFixedSize(28, 28);
+        openButton->setCursor(Qt::PointingHandCursor);
+        openButton->setToolTip("管理此实例");
+        openButton->setStyleSheet(
+            "QPushButton { background-color: #f3f4f6; border: 1px solid #e5e7eb;"
+            "  border-radius: 8px; color: #374151; font-size: 14px; font-weight: 700; }"
+            "QPushButton:hover { background-color: #e5e7eb; border-color: #3b82f6; color: #2563eb; }"
+        );
+        const QString vid = versionId;
+        connect(openButton, &QPushButton::clicked, this, [this, vid]() {
+            const int idx = m_manageVersionCombo->findData(vid);
+            if (idx >= 0) m_manageVersionCombo->setCurrentIndex(idx);
+        });
+        rowLayout->addWidget(openButton);
+
+        m_manageInstanceList->setItemWidget(item, row);
+    }
+
+    if (!currentManaged.isEmpty()) {
+        for (int i = 0; i < m_manageInstanceList->count(); ++i) {
+            if (m_manageInstanceList->item(i)->data(Qt::UserRole).toString() == currentManaged) {
+                m_manageInstanceList->setCurrentRow(i);
+                break;
+            }
+        }
+    }
+}
+
 QWidget *MainWindow::buildVersionManagementTab()
 {
     auto *page = new QWidget(this);
@@ -5369,22 +5766,109 @@ QWidget *MainWindow::buildVersionManagementTab()
     int lineEditHeight = 30;
     int spinBoxHeight = 30;
 
-    auto *versionBox = new QGroupBox("当前管理版本");
-    versionBox->setMinimumHeight(80);
-    auto *versionLayout = new QHBoxLayout(versionBox);
-    versionLayout->addWidget(new QLabel("版本"));
+    // ===== 版本管理：HMCL 风格实例列表 =====
+    auto *versionBox = new QWidget();
+    auto *versionLayout = new QVBoxLayout(versionBox);
+    versionLayout->setContentsMargins(0, 0, 0, 0);
+    versionLayout->setSpacing(10);
+
     m_manageVersionCombo = new QComboBox(versionBox);
-    m_manageVersionCombo->setMinimumHeight(comboBoxHeight);
-    auto *refreshVersionsButton = new QPushButton("刷新版本列表", versionBox);
-    refreshVersionsButton->setMinimumSize(buttonSize);
-    auto *openInstanceButton = new QPushButton("打开实例目录", versionBox);
-    openInstanceButton->setMinimumSize(buttonSize);
-    auto *deleteVersionButton = new QPushButton("删除该版本", versionBox);
-    deleteVersionButton->setMinimumSize(buttonSize);
-    versionLayout->addWidget(m_manageVersionCombo, 1);
-    versionLayout->addWidget(refreshVersionsButton);
-    versionLayout->addWidget(openInstanceButton);
-    versionLayout->addWidget(deleteVersionButton);
+    m_manageVersionCombo->setVisible(false);
+    versionLayout->addWidget(m_manageVersionCombo);
+
+    auto *toolbar = new QFrame(versionBox);
+    toolbar->setObjectName("manageToolbar");
+    toolbar->setStyleSheet(
+        "#manageToolbar { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; }"
+    );
+    auto *toolbarLayout = new QHBoxLayout(toolbar);
+    toolbarLayout->setContentsMargins(12, 8, 12, 8);
+    toolbarLayout->setSpacing(8);
+
+    auto makeToolButton = [toolbar](const QString &text, const QString &tip) {
+        auto *btn = new QPushButton(text, toolbar);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setToolTip(tip);
+        btn->setFixedHeight(34);
+        btn->setStyleSheet(
+            "QPushButton { background-color: #f3f4f6; border: 1px solid #e5e7eb;"
+            "  border-radius: 8px; color: #374151; font-size: 13px; font-weight: 500; padding: 0 14px; }"
+            "QPushButton:hover { background-color: #e5e7eb; border-color: #d1d5db; }"
+            "QPushButton:pressed { background-color: #d1d5db; }"
+        );
+        return btn;
+    };
+
+    m_manageRefreshButton = makeToolButton("刷新", "刷新实例列表");
+    toolbarLayout->addWidget(m_manageRefreshButton);
+
+    m_manageInstallNewButton = makeToolButton("安装新游戏", "前往下载中心安装新游戏");
+    toolbarLayout->addWidget(m_manageInstallNewButton);
+
+    m_manageOpenDirButton = makeToolButton("打开目录", "打开当前实例目录");
+    toolbarLayout->addWidget(m_manageOpenDirButton);
+
+    m_manageDeleteButton = makeToolButton("删除", "删除当前实例版本");
+    toolbarLayout->addWidget(m_manageDeleteButton);
+
+    toolbarLayout->addStretch();
+
+    m_manageSearchEdit = new QLineEdit(toolbar);
+    m_manageSearchEdit->setPlaceholderText("搜索实例…");
+    m_manageSearchEdit->setClearButtonEnabled(true);
+    m_manageSearchEdit->setFixedHeight(34);
+    m_manageSearchEdit->setMinimumWidth(200);
+    m_manageSearchEdit->setStyleSheet(
+        "QLineEdit { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 8px;"
+        "  background-color: #f9fafb; font-size: 13px; color: #1f2937; }"
+        "QLineEdit:focus { border: 1px solid #3b82f6; background-color: #ffffff; }"
+    );
+    toolbarLayout->addWidget(m_manageSearchEdit);
+
+    versionLayout->addWidget(toolbar);
+
+    m_manageInstanceList = new QListWidget(versionBox);
+    m_manageInstanceList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_manageInstanceList->setSpacing(0);
+    m_manageInstanceList->setIconSize(QSize(32, 32));
+    m_manageInstanceList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_manageInstanceList->setStyleSheet(
+        "QListWidget { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px;"
+        "  padding: 4px; outline: none; }"
+        "QListWidget::item { padding: 0px; border-bottom: 1px solid #f1f3f5; }"
+        "QListWidget::item:hover { background-color: #f9fafb; }"
+        "QListWidget::item:selected { background-color: rgba(59, 130, 246, 0.12); }"
+    );
+    versionLayout->addWidget(m_manageInstanceList, 1);
+
+    connect(m_manageRefreshButton, &QPushButton::clicked, this, [this]() {
+        animateButton(m_manageRefreshButton);
+        refreshInstalledVersionsUi();
+        refreshManageInstanceList();
+    });
+
+    connect(m_manageInstallNewButton, &QPushButton::clicked, this, [this]() {
+        animateButton(m_manageInstallNewButton);
+        if (m_mainTabWidget) {
+            m_mainTabWidget->setCurrentIndex(2);
+        }
+        if (m_downloadStackedWidget && !m_downloadNavButtons.isEmpty()) {
+            m_downloadNavButtons.first()->setChecked(true);
+            m_downloadStackedWidget->setCurrentIndex(0);
+        }
+    });
+
+    connect(m_manageSearchEdit, &QLineEdit::textChanged, this, [this]() {
+        refreshManageInstanceList();
+    });
+
+    connect(m_manageInstanceList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *cur, QListWidgetItem *) {
+        if (!cur) return;
+        const QString versionId = cur->data(Qt::UserRole).toString();
+        if (versionId.isEmpty()) return;
+        const int idx = m_manageVersionCombo->findData(versionId);
+        if (idx >= 0) m_manageVersionCombo->setCurrentIndex(idx);
+    });
 
     auto *profileBox = new QGroupBox("版本隔离与启动配置");
     profileBox->setMinimumHeight(350);
@@ -5606,26 +6090,22 @@ QWidget *MainWindow::buildVersionManagementTab()
         syncSelectedVersion(versionId, m_manageVersionCombo);
         refreshVersionManagementUi();
     });
-    connect(refreshVersionsButton, &QPushButton::clicked, this, [this] {
-        refreshInstalledVersionsUi();
-        refreshVersionManagementUi();
-    });
-    connect(openInstanceButton, &QPushButton::clicked, this, [this] {
+    connect(m_manageOpenDirButton, &QPushButton::clicked, this, [this]() {
         const QString versionId = currentManagedVersion();
         if (versionId.isEmpty()) {
-            showError(this, "当前没有可管理的版本。");
+            showError(this, "当前没有可管理的版本");
             return;
         }
         QDesktopServices::openUrl(QUrl::fromLocalFile(m_core.versionInstanceDirectory(versionId)));
     });
-    connect(deleteVersionButton, &QPushButton::clicked, this, [this] {
+
+    connect(m_manageDeleteButton, &QPushButton::clicked, this, [this]() {
         const QString versionId = currentManagedVersion();
         if (versionId.isEmpty()) {
-            showError(this, "请先选择要删除的版本。");
+            showError(this, "请先选择要删除的版本");
             return;
         }
-        if (QMessageBox::question(this,
-                                  "Kill",
+        if (QMessageBox::question(this, "Kill",
                                   QString("确认删除版本 %1 以及对应实例目录吗？").arg(versionId))
             != QMessageBox::Yes) {
             return;
@@ -5635,11 +6115,10 @@ QWidget *MainWindow::buildVersionManagementTab()
             showError(this, error);
             return;
         }
-        appendLog(QString("已删除版本: %1").arg(versionId));
+        appendLog(QString("已删除版本 %1").arg(versionId));
         refreshInstalledVersionsUi();
         refreshVersionManagementUi();
     });
-
     connect(m_manageIsolationCheck, &QCheckBox::toggled, this, [this] {
         updateVersionProfileEditorState();
     });

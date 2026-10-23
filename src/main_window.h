@@ -93,6 +93,7 @@ private:
     void refreshDownloadVersions();
     void populateDownloadVersionsTable();
     void populateDownloadVersionList();
+
     QWidget *buildVersionInstallPage();
     void showVersionInstallPage(const QJsonObject &versionObj);
     void leaveVersionInstallPage();
@@ -196,12 +197,27 @@ private:
     QLabel *m_versionInstallReleaseTime = nullptr;
     QLineEdit *m_versionInstallNameEdit = nullptr;
     QPushButton *m_versionInstallConfirmButton = nullptr;
+    QWidget *m_installerCardContainer = nullptr;
+    QHash<QString, QString> m_installerChosenVersions;
+    QString m_installerGameVersion;
+    void rebuildInstallerCards();
+    void openInstallerVersionPicker(const QString &loaderId, const QString &loaderName);
+    static QList<QPair<QString, QString>> installerCandidatesFor(const QString &gameVersion);
     QJsonObject m_selectedDownloadVersion;
     QJsonObject m_installingVersion;
 
     QJsonArray m_allDownloadVersions;
 
     QComboBox *m_manageVersionCombo = nullptr;
+    QListWidget *m_manageInstanceList = nullptr;
+    QPushButton *m_manageRefreshButton = nullptr;
+    QPushButton *m_manageInstallNewButton = nullptr;
+    QPushButton *m_manageSearchButton = nullptr;
+    QPushButton *m_manageOpenDirButton = nullptr;
+    QPushButton *m_manageDeleteButton = nullptr;
+    QLineEdit *m_manageSearchEdit = nullptr;
+    void refreshManageInstanceList();
+    static QString manageInstanceIconFor(const QString &versionId);
     QCheckBox *m_manageIsolationCheck = nullptr;
     QLineEdit *m_manageJavaPathEdit = nullptr;
     QLineEdit *m_manageJavaArgsEdit = nullptr;
