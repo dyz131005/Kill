@@ -20,6 +20,17 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# 静态 Qt 若链接 OpenSSL，find_package(Qt6 Network) 需要能找到 OpenSSL 库/头文件
+if(KILL_STATIC_QT)
+    if(NOT DEFINED OPENSSL_ROOT_DIR AND EXISTS "D:/program/qt-src/openssl-static")
+        set(OPENSSL_ROOT_DIR "D:/program/qt-src/openssl-static" CACHE PATH "OpenSSL root" FORCE)
+    endif()
+    if(OPENSSL_ROOT_DIR)
+        set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "Use static OpenSSL" FORCE)
+        message(STATUS "OpenSSL root: ${OPENSSL_ROOT_DIR}")
+    endif()
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Svg)
 qt_standard_project_setup()
 
@@ -47,6 +58,21 @@ endif()
 
 target_include_directories(Kill PRIVATE src)
 target_link_libraries(Kill PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg)
+
+# 静态构建必须显式链接 Qt 静态插件，否则 https 等协议不可用
+# 优先 OpenSSL 后端（Win7 RTM 上 Schannel 缺 TLS 1.2，会报 Protocol type not supported）
+# 若 Qt 未启用 OpenSSL，则退回 Schannel
+if(KILL_STATIC_QT)
+    if(TARGET Qt6::QTlsBackendOpenSSLPlugin)
+        target_link_libraries(Kill PRIVATE Qt6::QTlsBackendOpenSSLPlugin)
+        message(STATUS "Linked static TLS backend: Qt6::QTlsBackendOpenSSLPlugin")
+    elseif(TARGET Qt6::QSchannelBackendPlugin)
+        target_link_libraries(Kill PRIVATE Qt6::QSchannelBackendPlugin)
+        message(STATUS "Linked static TLS backend: Qt6::QSchannelBackendPlugin")
+    else()
+        message(WARNING "No static TLS backend plugin found; https may fail at runtime.")
+    endif()
+endif()
 
 if(WIN32)
     target_link_libraries(Kill PRIVATE userenv shell32)

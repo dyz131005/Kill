@@ -78,3 +78,5 @@ $RECYCLE.BIN/
 # ---------- 静态构建目录 ----------
 build_static/
 dist_test/
+
+build_ssl/
