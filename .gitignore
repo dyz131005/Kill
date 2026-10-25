@@ -74,3 +74,7 @@ $RECYCLE.BIN/
 .aider*
 
 .forge-permissions.json
+
+# ---------- 静态构建目录 ----------
+build_static/
+dist_test/

@@ -73,6 +73,9 @@ public:
     QJsonArray listVersionMods(const QString &versionId) const;
     bool setModEnabled(const QString &versionId, const QString &fileName, bool enabled, QString *error);
     bool removeModFile(const QString &versionId, const QString &fileName, QString *error);
+    QString versionResourcepacksDirectory(const QString &versionId) const;
+    QJsonArray listVersionResourcepacks(const QString &versionId) const;
+    bool removeResourcepack(const QString &versionId, const QString &fileName, QString *error);
     QJsonArray listVersionWorlds(const QString &versionId) const;
     bool removeWorld(const QString &versionId, const QString &worldName, QString *error);
     QJsonArray scanInstalledLoaders(const QString &versionId) const;

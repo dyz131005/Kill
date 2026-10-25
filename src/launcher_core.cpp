@@ -1096,6 +1096,56 @@ bool LauncherCore::removeModFile(const QString &versionId, const QString &fileNa
     return true;
 }
 
+QString LauncherCore::versionResourcepacksDirectory(const QString &versionId) const
+{
+    return instanceDirectoryForVersion(versionId) + "/resourcepacks";
+}
+
+QJsonArray LauncherCore::listVersionResourcepacks(const QString &versionId) const
+{
+    QJsonArray result;
+    const QDir dir(versionResourcepacksDirectory(versionId));
+    const QFileInfoList files = dir.entryInfoList(
+        QStringList() << ".zip" << ".jar",
+        QDir::Files,
+        QDir::Name | QDir::IgnoreCase);
+    for (const QFileInfo &info : files) {
+        const qint64 bytes = info.size();
+        QString sizeText;
+        if (bytes >= 1024LL * 1024LL) {
+            sizeText = QString::number(bytes / (1024.0 * 1024.0), 'f', 2) + " MB";
+        } else if (bytes >= 1024) {
+            sizeText = QString::number(bytes / 1024.0, 'f', 1) + " KB";
+        } else {
+            sizeText = QString::number(bytes) + " B";
+        }
+        result.append(QJsonObject{
+            {"displayName", info.completeBaseName()},
+            {"fileName", info.fileName()},
+            {"sizeText", sizeText},
+            {"path", QDir::toNativeSeparators(info.absoluteFilePath())},
+            {"modified", info.lastModified().toString(Qt::ISODate)}
+        });
+    }
+    return result;
+}
+
+bool LauncherCore::removeResourcepack(const QString &versionId, const QString &fileName, QString *error)
+{
+    const QString path = versionResourcepacksDirectory(versionId) + "/" + fileName;
+    QFile file(path);
+    if (!file.exists()) {
+        if (error) *error = "资源包文件不存在";
+        return false;
+    }
+    if (!file.remove()) {
+        if (error) *error = "删除资源包失败";
+        return false;
+    }
+    if (error) error->clear();
+    return true;
+}
+
 QJsonArray LauncherCore::listVersionWorlds(const QString &versionId) const
 {
     QJsonArray result;

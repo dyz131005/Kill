@@ -16,6 +16,29 @@
 > **只要 Kill 还在一天，下载功能就一天不会消失。** 恶意举报可以关掉入口，但关不掉我们继续写下去的意志。
 >
 > 感谢每一位真正热爱 MC、真正支持开源社区的玩家。
+>
+> ## 📢 关于 PCL2 作者账号被封的声明
+>
+> 2026 年 10 月 22 日前后，PCL2 作者龙腾猫跃的 GitHub 账号被封禁。在此之前的四天里，PCL 先后经历了「停止提供下载功能」的公告、每分钟 1.54 亿次请求的 DDoS 攻击（总计 21 亿次，来自超过 10000 个 IPv4 地址，直接损失超过 6000 元），以及网络上针对其公告系统的「后门」指控。四件事在四天内接连发生，节奏紧凑得让人无法视作巧合。
+>
+> **Kill 对此的态度，必须说清楚。**
+>
+> 我们不打算在这里给谁定罪。GitHub 至今没有公开封禁的具体理由，龙腾猫跃本人也未对封禁原因作出确切说明。在没有官方结论的前提下，把矛头指向某个具体的人或群体，既不负责任，也解决不了任何问题。但**这不代表我们可以对已经发生的事实保持沉默**。
+>
+> **我们痛斥的，是一种手段。** 以举报为武器，把一个仍在活跃维护、仍有人在用的开源项目从平台上抹去；以 DDoS 为手段，让一个个人开发者为自己的服务器账单买单；以「可能存在的风险」为由，在没有任何司法或平台裁定之前，就把一个项目钉在耻辱柱上。这套组合拳打下来，输的不是某一个开发者，而是所有还在写代码、还在分享、还在免费为社区做东西的人。一个生态如果让「举报」成为成本最低、见效最快的攻击方式，那它迟早会把所有认真做事的人赶走。留下来的，只会是最会举报的人。
+>
+> **我们同样要说清楚：指出技术风险本身没有错。** 有人指出 PCL 的公告系统在技术上具备写入设置项的能力，这不是造谣，代码确实存在这样的路径。发现问题、公开讨论、推动修复，这是开源社区赖以运转的机制。但「指出问题」和「借此把一个项目连根拔起」是两件性质完全不同的事。前者是建设，后者是破坏。把两者混为一谈，用技术讨论的正当性去掩盖举报打压的实质，这是我们无法接受的。
+>
+> **因此，Kill 在此正式呼吁：**
+>
+> - **呼吁 GitHub 尽快复核并恢复 PCL2 作者的账号。** 如果封禁是基于具体违规，请公开说明依据；如果只是批量举报触发的自动化处置，请尽快纠正。一个拥有数十万用户的项目的维护者，不应该在没有明确说明的情况下从平台上消失。
+> - **呼吁 GitHub 完善针对恶意批量举报的识别与申诉机制。** 举报功能的初衷是保护社区，不是让少数人用来清除异己。当举报成为一种可以批量、匿名、低成本使用的攻击工具时，平台有责任把这道口子堵上。
+> - **呼吁所有还在做开源项目的人，把这件事记在心里。** 今天被封的是 PCL，明天可能是任何一个名字。我们无法预知下一次会轮到谁，但我们可以选择在这一次不装作没看见。
+>
+> **Kill 不站队，但 Kill 有立场。** 我们不参与对任何具体个人或组织的指控，也不传播未经证实的信息。我们只是认为：**一个健康的社区，不应该让举报者赢。**
+>
+> 这句话写在 README 里，不是一时情绪，而是留给将来某一天回看时的一个记号。
+
 
 一个基于 **Qt Widgets + QSS + CMake + C++20** 的 Minecraft Java 版启动器项目，面向 Windows（MinGW / MSVC）环境，默认优先使用 **bangbang93 / BMCLAPI** 镜像源加速资源下载。支持 Fabric / Forge 模组加载器、Modrinth & CurseForge 模组搜索下载、版本隔离、实例目录管理和 Win32 级别的详细日志诊断。
 
@@ -74,7 +97,6 @@
 | 网络 | Qt6::Network（HTTP / HTTPS） |
 | 构建 | CMake 3.21+ / C++20 |
 | 编译器 | MinGW g++ 或 MSVC（需启用 `/utf-8`） |
-| 打包 | Inno Setup 6（`build.iss`） |
 | 资源打包 | Qt RCC（`resources.qrc`） |
 
 ---
@@ -104,69 +126,58 @@ Kill/
 ├─ fabric-installer.jar         # Fabric 官方安装器
 ├─ forge-installer.jar          # Forge 官方安装器
 ├─ count_simple.ps1             # 代码行数统计脚本
-└─ build.iss                    # Inno Setup 打包脚本（整机/用户安装双模式）
 ```
 
 ---
 
 ## 🔨 构建方式
 
-本项目不使用 `.pro`，直接使用 **CMake + Qt6 + C++20**。
+本项目不使用 `.pro`，直接使用 CMake + Qt6 + C++20，默认构建静态 Qt 单文件。
 
 ### 1. 环境要求
 
-- **Qt**：6.6 及以上，模块至少包含 `Core`、`Gui`、`Widgets`、`Network`
-- **编译器**：
-  - MinGW：g++ 11+（推荐 MinGW-UCrt 64-bit）
-  - MSVC：VS 2022（默认 `/utf-8` 已在 CMake 中打开）
-- **CMake**：3.21 及以上
+- Qt：静态构建的 Qt 6.8（本仓库使用 `D:\program\qt-static\6.8.4\msvc2022_64`），模块至少包含 `Core`、`Gui`、`Widgets`、`Network`、`Svg`
+- 编译器：MSVC（VS 2022 / 2026，默认 `/utf-8` 已在 CMake 中打开）
+- CMake：3.21 及以上
+- Ninja：推荐作为生成器
+- Python 3：用于编译后自动修补 Win7 兼容的导入表
 
-静态单文件可选：
-```cmake
-cmake ... -DKILL_STATIC_QT=ON
-```
-是否能真的单文件，仍取决于你使用的 Qt 是否为静态构建版本。
-
-### 2. MinGW 构建示例
+### 2. 构建示例
 
 ```powershell
-cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH="D:/Qt/6.8.0/mingw_64"
-cmake --build build -j8
+cmake -S . -B build_static -G Ninja `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_PREFIX_PATH="D:/program/qt-static/6.8.4/msvc2022_64" `
+  -DKILL_STATIC_QT=ON
+cmake --build build_static --parallel
 ```
 
-构建完成后 `build/Kill.exe` 会被自动复制到 `dist/Kill/`，并调用 `windeployqt` 部署所有 Qt 运行库 DLL 和插件（`platforms/`、`imageformats/`、`iconengines/`、`tls/`、`styles/` 等）。
+构建产物直接输出到 `dist/`：
+
+```text
+dist/
+├─ Kill.exe      # 静态链接单文件，无 Qt DLL 依赖
+└─ icon.ico
+```
 
 ### 3. 直接运行
 
 ```powershell
-.\dist\Kill\Kill.exe
+.\dist\Kill.exe
 ```
 
----
+### 4. 动态构建（仅开发调试）
 
-## 📦 打包成安装程序（Inno Setup）
+若需用动态 Qt 快速调试，关闭静态开关即可，此时会调用 `windeployqt` 部署 Qt 运行库：
 
-项目根目录提供了 `build.iss`，使用 **Inno Setup 6** 编译即可生成 `dist\Kill安装程序.exe`。
+```powershell
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH="D:/Qt/6.8.0/mingw_64" -DKILL_STATIC_QT=OFF
+cmake --build build -j8
+```
 
-脚本基于 adsCleaner / gunmu 等项目的同套模板，主要特性：
+### 5. 关于静态 Qt 的 Win7 兼容
 
-| 选项 | 默认值 | 说明 |
-|------|--------|------|
-| **安装范围** | 为所有用户安装（管理员） | `PrivilegesRequiredOverridesAllowed=dialog` 弹窗，默认整机；也可切「仅当前用户」无需 UAC |
-| **整机安装默认路径** | `C:\Program Files\Kill` | 通过 `{autopf}` 自动展开 |
-| **用户安装默认路径** | `%LOCALAPPDATA%\Programs\Kill`（AppData 树下）| 通过 `{autopf}` 自动展开 |
-| **自定义安装路径** | ✅ 始终显示 | `DisableDirPage=no` 强制开启，不会因检测到旧版本而被跳过 |
-| **桌面快捷方式** | ⬜ 默认不勾选 | 用户自选 |
-| **开始菜单文件夹** | ☑ 默认创建 | 可取消勾选以关闭创建（`Tasks.startmenu`） |
-
-### 编译安装包
-
-1. 安装 [Inno Setup 6](https://jrsoftware.org/isdl.php)
-2. 打开 `build.iss` → Build → Compile，或命令行：
-   ```powershell
-   & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" .\build.iss
-   ```
-3. 输出：`dist\Kill安装程序.exe`
+MSVC 14.4x 的静态 UCRT 硬链接了 Windows 8 才引入的 `GetSystemTimePreciseAsFileTime`，在 Win7 上启动会报「无法定位输入点」。构建流程会在链接完成后自动调用 `scripts/patch_win7_import.py`，把导入名改写为 Win7 可用的 `GetSystemTimeAsFileTime`，无需手动处理。
 
 ---
 
@@ -197,11 +208,5 @@ CurseForge 官方接口对第三方启动器要求 CF Core API Key，未填写�
 | 启动后 Fabric 报错 `ClassNotFoundException: KnotClient` | Fabric 依赖库（如 ASM、Mixin）未下载或未进入 classpath | 看 `dist\Kill\logs\` 里 `installLibraries` 段日志；检查 `libraries\org\ow2\asm\...` 等目录是否有 jar |
 | 模组安装了但游戏里加载不到 | 以前 Kill 下载到 `versions/X/mods`，但 Fabric 读的是 `instances/X/mods` | 用最新版 Kill 重新下载（已统一走 `versionModsDirectory()`），或手动把 jar 搬到 `instances/<versionId>/mods/` |
 | 日志里提示「无法创建目录 / 拒绝访问」但资源管理器能写 | Windows 安全中心 ASR 规则或 `gameflt.sys` 等 Minifilter 拦截特定进程路径 | 看日志输出的「路径逐段诊断 + Win32 错误码」；建议把实例 / 游戏目录迁到 D 盘 |
-| 安装包向导里看不到「改路径」页 | 旧版本 AppId 残留导致进入维护模式 | 先卸载旧版 Kill，或在 `build.iss` 换一个 AppId GUID 重新编译 |
 | CurseForge 页面一直空 | 没填 CF Core API Key | 设置里填 Key 后重启 |
 
----
-
-## 📜 免责声明
-
-本项目仅供学习和个人使用。Minecraft、Mojang、Microsoft、Modrinth、CurseForge、Forge、Fabric 等相关商标与服务归各自所有者所有。

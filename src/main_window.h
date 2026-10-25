@@ -210,6 +210,11 @@ private:
 
     QComboBox *m_manageVersionCombo = nullptr;
     QListWidget *m_manageInstanceList = nullptr;
+    QTableWidget *m_manageResourcepacksTable = nullptr;
+    QPushButton *m_manageRefreshRpButton = nullptr;
+    QPushButton *m_manageOpenRpButton = nullptr;
+    QPushButton *m_manageDeleteRpButton = nullptr;
+    void refreshVersionResourcepacksUi();
     QPushButton *m_manageRefreshButton = nullptr;
     QPushButton *m_manageInstallNewButton = nullptr;
     QPushButton *m_manageSearchButton = nullptr;

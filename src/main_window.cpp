@@ -48,6 +48,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QStringConverter>
 #include <QTextStream>
 #include <QTimer>
 #include <QUrl>
@@ -1719,7 +1720,43 @@ void MainWindow::performVersionInstall()
         return;
     }
 
-    showInfo(this, QString("版本 %1 安装任务已启动，请查看日志进度").arg(instName));
+    if (m_installerChosenVersions.isEmpty()) {
+        showInfo(this, QString("版本 %1 安装任务已启动，请查看日志进度").arg(instName));
+        leaveVersionInstallPage();
+        refreshInstalledVersionsUi();
+        return;
+    }
+
+    const QStringList orderedLoaders = {"forge", "neoforge", "cleanroom", "liteloader", "fabric", "quilt", "legacyfabric", "optifine"};
+    QStringList installed;
+    QStringList failed;
+
+    for (const QString &loaderId : orderedLoaders) {
+        if (!m_installerChosenVersions.contains(loaderId)) continue;
+        const QString loaderVersion = m_installerChosenVersions.value(loaderId);
+
+        appendLog(QString("安装加载器: %1 %2（游戏版本 %3）").arg(loaderId, loaderVersion, verId));
+        QString loaderError;
+        const bool loaderOk = m_core.installLoaderWithDialog(verId, loaderId, loaderVersion, &loaderError, this);
+        if (loaderOk) {
+            installed.append(QString("%1 %2").arg(loaderId, loaderVersion));
+        } else {
+            failed.append(QString("%1：%2").arg(loaderId, loaderError.isEmpty() ? QStringLiteral("未知错误") : loaderError));
+            appendLog(QString("加载器 %1 安装失败: %2").arg(loaderId, loaderError));
+        }
+    }
+
+    QString summary = QString("版本 %1 安装完成").arg(instName);
+    if (!installed.isEmpty()) {
+        summary += QString(QChar(10)) + QString("已安装加载器：%1").arg(installed.join(QStringLiteral("、")));
+    }
+    if (!failed.isEmpty()) {
+        summary += QString(QChar(10)) + QString("以下加载器安装失败：") + QString(QChar(10)) + failed.join(QStringLiteral("、"));
+        QMessageBox::warning(this, "Kill", summary);
+    } else {
+        showInfo(this, summary);
+    }
+
     leaveVersionInstallPage();
     refreshInstalledVersionsUi();
 }
@@ -2832,7 +2869,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.5", infoBox);
+    auto *versionLabel = new QLabel("1.6", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -2914,18 +2951,15 @@ QWidget *MainWindow::buildAboutPage()
         "}"
     );
 
-    const QString exeDir = QCoreApplication::applicationDirPath();
-    const QString logPath = exeDir + QDir::separator() + "updatelog.txt";
-    QFile logFile(logPath);
+    // 更新日志已嵌入 exe 资源（resources.qrc -> :/updatelog.txt）
+    QFile logFile(":/updatelog.txt");
     if (logFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream stream(&logFile);
+        stream.setEncoding(QStringConverter::Utf8);
         m_aboutUpdateLogEdit->setPlainText(stream.readAll());
         logFile.close();
     } else {
-        m_aboutUpdateLogEdit->setPlainText(QString(
-            "（未找到 %1\n"
-            "请将更新日志以 UTF-8 编码保存为 updatelog.txt 放在程序同目录下。）"
-        ).arg(QDir::toNativeSeparators(logPath)));
+        m_aboutUpdateLogEdit->setPlainText(QStringLiteral("（未能读取内嵌更新日志资源 :/updatelog.txt）"));
     }
 
     changelogLayout->addWidget(m_aboutUpdateLogEdit);
@@ -3235,6 +3269,7 @@ void MainWindow::refreshVersionManagementUi()
         m_manageAvailableLoadersTable->setRowCount(0);
     }
     refreshVersionModsUi();
+    refreshVersionResourcepacksUi();
     refreshVersionWorldsUi();
     refreshInstalledLoadersUi();
 }
@@ -3266,6 +3301,32 @@ void MainWindow::refreshVersionModsUi()
         m_manageModsTable->setItem(row, 1, statusItem);
         m_manageModsTable->setItem(row, 2, new QTableWidgetItem(object.value("scope").toString() == "version" ? "当前版本" : "全局"));
         m_manageModsTable->setItem(row, 3, new QTableWidgetItem(object.value("modified").toString()));
+    }
+}
+
+void MainWindow::refreshVersionResourcepacksUi()
+{
+    if (!m_manageResourcepacksTable) {
+        return;
+    }
+
+    const QString versionId = currentManagedVersion();
+    m_manageResourcepacksTable->setRowCount(0);
+    if (versionId.isEmpty()) {
+        return;
+    }
+
+    const QJsonArray packs = m_core.listVersionResourcepacks(versionId);
+    for (const QJsonValue &value : packs) {
+        const QJsonObject object = value.toObject();
+        const int row = m_manageResourcepacksTable->rowCount();
+        m_manageResourcepacksTable->insertRow(row);
+
+        auto *nameItem = new QTableWidgetItem(object.value("displayName").toString());
+        nameItem->setData(Qt::UserRole, object.value("fileName").toString());
+        m_manageResourcepacksTable->setItem(row, 0, nameItem);
+        m_manageResourcepacksTable->setItem(row, 1, new QTableWidgetItem(object.value("sizeText").toString()));
+        m_manageResourcepacksTable->setItem(row, 2, new QTableWidgetItem(object.value("fileName").toString()));
     }
 }
 
@@ -5728,8 +5789,8 @@ QWidget *MainWindow::buildVersionManagementTab()
     m_manageNavGroup->setExclusive(true);
     m_manageNavButtons.clear();
 
-    QStringList categories = {"版本", "配置", "模组", "世界", "加载器"};
-    QStringList categoryIcons = {"🎮", "⚙️", "🧩", "🌍", "🔌"};
+    QStringList categories = {"版本", "自动安装", "模组", "资源包", "世界", "配置"};
+    QStringList categoryIcons = {"🎮", "🔌", "🧩", "🎨", "🌍", "⚙️"};
     for (int i = 0; i < categories.size(); ++i) {
         auto *btn = new QPushButton(categoryIcons[i] + "  " + categories[i], navWidget);
         btn->setCheckable(true);
@@ -5980,6 +6041,35 @@ QWidget *MainWindow::buildVersionManagementTab()
     worldsLayout->addLayout(worldsButtonRow);
     worldsLayout->addWidget(m_manageWorldsTable);
 
+    auto *resourcepacksBox = new QGroupBox("资源包管理");
+    resourcepacksBox->setMinimumHeight(280);
+    auto *rpLayout = new QVBoxLayout(resourcepacksBox);
+    auto *rpButtonRow = new QHBoxLayout();
+    m_manageRefreshRpButton = new QPushButton("刷新资源包", resourcepacksBox);
+    m_manageRefreshRpButton->setMinimumSize(buttonSize);
+    m_manageOpenRpButton = new QPushButton("打开资源包目录", resourcepacksBox);
+    m_manageOpenRpButton->setMinimumSize(buttonSize);
+    m_manageDeleteRpButton = new QPushButton("删除资源包", resourcepacksBox);
+    m_manageDeleteRpButton->setMinimumSize(buttonSize);
+    rpButtonRow->addWidget(m_manageRefreshRpButton);
+    rpButtonRow->addWidget(m_manageOpenRpButton);
+    rpButtonRow->addWidget(m_manageDeleteRpButton);
+    rpButtonRow->addStretch();
+
+    m_manageResourcepacksTable = new QTableWidget(resourcepacksBox);
+    m_manageResourcepacksTable->setMinimumHeight(180);
+    m_manageResourcepacksTable->setColumnCount(3);
+    m_manageResourcepacksTable->setHorizontalHeaderLabels({"资源包名称", "大小", "文件名"});
+    m_manageResourcepacksTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_manageResourcepacksTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_manageResourcepacksTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_manageResourcepacksTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_manageResourcepacksTable->setAlternatingRowColors(true);
+    m_manageResourcepacksTable->verticalHeader()->setDefaultSectionSize(28);
+
+    rpLayout->addLayout(rpButtonRow);
+    rpLayout->addWidget(m_manageResourcepacksTable);
+
     auto *loadersBox = new QGroupBox("加载器管理");
     loadersBox->setMinimumHeight(350);
     auto *loadersLayout = new QVBoxLayout(loadersBox);
@@ -6064,10 +6154,11 @@ QWidget *MainWindow::buildVersionManagementTab()
     };
 
     m_manageStackedWidget->addWidget(makeManagePage("版本管理", "选择要操作的实例版本，可查看、刷新、打开目录或删除已安装版本。", versionBox));
-    m_manageStackedWidget->addWidget(makeManagePage("版本配置", "为当前版本单独配置 Java 路径、内存、参数以及版本隔离等选项。", profileBox));
+    m_manageStackedWidget->addWidget(makeManagePage("自动安装", "为当前实例安装、重装或卸载 Forge / NeoForge / Fabric / Quilt / OptiFine 等模组加载器。", loadersBox));
     m_manageStackedWidget->addWidget(makeManagePage("模组管理", "查看、启用/禁用或删除当前版本下安装的模组文件。", modsBox));
+    m_manageStackedWidget->addWidget(makeManagePage("资源包管理", "查看、打开或删除当前版本的资源包文件。", resourcepacksBox));
     m_manageStackedWidget->addWidget(makeManagePage("世界管理", "管理当前版本下保存的世界存档，可查看或删除。", worldsBox));
-    m_manageStackedWidget->addWidget(makeManagePage("加载器管理", "为当前版本安装、重装或卸载 Fabric / Forge / NeoForge / Quilt 模组加载器。", loadersBox));
+    m_manageStackedWidget->addWidget(makeManagePage("版本配置", "为当前版本单独配置 Java 路径、内存、参数以及版本隔离等选项。", profileBox));
 
     for (int i = 0; i < m_manageNavButtons.size(); ++i) {
         connect(m_manageNavButtons[i], &QPushButton::clicked, this, [this, i] {
@@ -6214,6 +6305,36 @@ QWidget *MainWindow::buildVersionManagementTab()
             return;
         }
         refreshVersionWorldsUi();
+    });
+
+    connect(m_manageRefreshRpButton, &QPushButton::clicked, this, &MainWindow::refreshVersionResourcepacksUi);
+    connect(m_manageOpenRpButton, &QPushButton::clicked, this, [this] {
+        const QString versionId = currentManagedVersion();
+        if (versionId.isEmpty()) {
+            showError(this, "请先选择版本");
+            return;
+        }
+        const QString dir = m_core.versionResourcepacksDirectory(versionId);
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    connect(m_manageDeleteRpButton, &QPushButton::clicked, this, [this] {
+        const QString versionId = currentManagedVersion();
+        const int row = m_manageResourcepacksTable->currentRow();
+        if (versionId.isEmpty() || row < 0) {
+            showError(this, "请先选择要删除的资源包");
+            return;
+        }
+        const QString fileName = m_manageResourcepacksTable->item(row, 2)->text();
+        if (QMessageBox::question(this, "Kill", QString("确认删除资源包 %1 吗？").arg(fileName)) != QMessageBox::Yes) {
+            return;
+        }
+        QString error;
+        if (!m_core.removeResourcepack(versionId, fileName, &error)) {
+            showError(this, error);
+            return;
+        }
+        refreshVersionResourcepacksUi();
     });
 
     connect(m_manageFetchLoaderVersionsButton, &QPushButton::clicked, this, &MainWindow::refreshAvailableVersionLoaders);
