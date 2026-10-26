@@ -170,6 +170,7 @@ private:
     bool versionMatchesBase(const QString &candidateVersionId, const QString &baseVersionId) const;
 
     void log(const QString &message) const;
+    void logTlsEnvironment() const;
     void flushProcessLogBuffer(const QString &source, QByteArray &buffer, const QByteArray &chunk, bool flushRemaining = false) const;
     QString mirrorMetaBase() const;
     QString mirrorDataBase() const;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Kill VERSION 1.6.0 LANGUAGES CXX RC)
+project(Kill VERSION 1.7.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +47,8 @@ set(KILL_SOURCES
     src/download_progress_dialog.cpp
     src/download_manager.h
     src/download_manager.cpp
+    src/zip_utils.h
+    src/zip_utils.cpp
     resources.qrc
 )
 
@@ -58,6 +60,14 @@ endif()
 
 target_include_directories(Kill PRIVATE src)
 target_link_libraries(Kill PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg)
+
+# QZipReader (used for jar/zip extraction that must work on Windows 7 RTM
+# without relying on external tar/PowerShell) lives in Qt6::CorePrivate.
+if(TARGET Qt6::CorePrivate)
+    target_link_libraries(Kill PRIVATE Qt6::CorePrivate)
+else()
+    message(WARNING "Qt6::CorePrivate not found; QZipReader zip extraction may fail to link.")
+endif()
 
 # 静态构建必须显式链接 Qt 静态插件，否则 https 等协议不可用
 # 优先 OpenSSL 后端（Win7 RTM 上 Schannel 缺 TLS 1.2，会报 Protocol type not supported）

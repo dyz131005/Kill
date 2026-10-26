@@ -63,6 +63,7 @@
 #include <functional>
 
 #include "download_manager.h"
+#include "zip_utils.h"
 
 namespace {
 inline int randomInt(int min, int max)
@@ -2869,7 +2870,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.6", infoBox);
+    auto *versionLabel = new QLabel("1.7", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -6899,21 +6900,10 @@ void MainWindow::downloadJava()
 
     QDir().mkpath(installDir);
 
-    QProcess extractProcess;
-    extractProcess.setWorkingDirectory(installDir);
-    QStringList args;
-    args << "-Command" << QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force").arg(archivePath).arg(installDir);
-    
-    extractProcess.start("powershell", args);
-    if (!extractProcess.waitForFinished(120000)) {
-        appendLog("Java 解压失败: 解压超时");
-        showError(this, "解压超时！");
-        return;
-    }
-
-    if (extractProcess.exitCode() != 0) {
-        appendLog(QString("Java 解压失败: %1").arg(QString::fromLocal8Bit(extractProcess.readAllStandardError()).trimmed()));
-        showError(this, "解压失败！");
+    QString javaUnzipError;
+    if (!ZipUtils::extractArchive(archivePath, installDir, &javaUnzipError)) {
+        appendLog(QString("Java 解压失败: %1").arg(javaUnzipError));
+        showError(this, QString("解压失败: %1").arg(javaUnzipError));
         return;
     }
 

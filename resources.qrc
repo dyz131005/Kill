@@ -3,6 +3,7 @@
         <file>assets/style.qss</file>
         <file>icon.ico</file>
         <file>updatelog.txt</file>
+        <file>assets/cacert.pem</file>
         <file>assets/version-icons/grass.png</file>
         <file>assets/version-icons/grass@2x.png</file>
         <file>assets/version-icons/chest.png</file>

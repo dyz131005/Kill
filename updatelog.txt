@@ -2,6 +2,18 @@ Kill Minecraft Launcher 更新日志
 
 ============================================================
 
+v1.7  (2026-10-26)
+------------------------------------------------------------
+- Win7 RTM(7600 无 SP1) 兼容性修复，可在 VMware 虚拟机内运行
+- 修复 socket 创建时 WSA_FLAG_NO_HANDLE_INHERIT 在 Win7 上导致 Protocol type not supported
+- 内置 Mozilla CA 证书库，修复 Win7 旧证书库导致的 SSL 自签名/不受信任握手失败
+- 原生库/JRE/整合包解压改用内置 QZipReader，不再依赖系统 tar / PowerShell
+- 修复无 url 字段的旧库(如 launchwrapper)未下载导致找不到主类
+- 修复缺少 -cp 参数导致老版本(pre-1.6)找不到主类
+- 修复缺少 -Djava.library.path 导致 lwjgl 找不到原生库
+- 支持 Mesa 软件 OpenGL：自动设置 GALLIUM_DRIVER 等环境变量并加 allowSoftwareOpenGL 参数
+- 关于页面版本号更新为 1.7
+
 v1.6  (2026-10-25)
 ------------------------------------------------------------
 - 主编译切换为静态 Qt 单文件构建（默认 KILL_STATIC_QT=ON），产物直接输出到 dist 目录

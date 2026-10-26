@@ -19,7 +19,12 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSslCipher>
+#include <QSslConfiguration>
+#include <QSslError>
+#include <QSslSocket>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -32,6 +37,7 @@
 
 #include "download_manager.h"
 #include "download_progress_dialog.h"
+#include "zip_utils.h"
 
 namespace {
 QString osName()
@@ -248,6 +254,86 @@ void LauncherCore::log(const QString &message) const
     emit const_cast<LauncherCore *>(this)->logMessage(message);
 }
 
+void LauncherCore::logTlsEnvironment() const
+{
+    log(QStringLiteral("===== TLS 环境诊断开始 ====="));
+    log(QStringLiteral("[TLS] 运行时后端: %1")
+            .arg(QSslSocket::activeBackend().isEmpty() ? QStringLiteral("(空)") : QSslSocket::activeBackend()));
+    log(QStringLiteral("[TLS] 可用后端: [%1]")
+            .arg(QSslSocket::availableBackends().join(QStringLiteral(", "))));
+    log(QStringLiteral("[TLS] supportsSsl: %1")
+            .arg(QSslSocket::supportsSsl() ? QStringLiteral("true") : QStringLiteral("false")));
+    log(QStringLiteral("[TLS] 编译期库版本: %1").arg(QSslSocket::sslLibraryBuildVersionString()));
+    log(QStringLiteral("[TLS] 运行时库版本: %1")
+            .arg(QSslSocket::sslLibraryVersionString().isEmpty()
+                     ? QStringLiteral("(空)")
+                     : QSslSocket::sslLibraryVersionString()));
+    log(QStringLiteral("[TLS] 系统 CA 证书数量: %1")
+            .arg(QSslConfiguration::defaultConfiguration().caCertificates().size()));
+
+    // 实际建立一次 TLS 连接，暴露握手阶段的真实错误（TLS 自检）
+    const QString host = QStringLiteral("bmclapi2.bangbang93.com");
+    const quint16 port = 443;
+    log(QStringLiteral("[TLS] 开始握手测试: %1:%2").arg(host).arg(port));
+
+    QSslSocket socket;
+    socket.setPeerVerifyMode(QSslSocket::VerifyPeer);
+    socket.connectToHostEncrypted(host, port);
+    if (!socket.waitForConnected(10000)) {
+        log(QStringLiteral("[TLS] TCP 连接失败: %1").arg(socket.errorString()));
+        log(QStringLiteral("===== TLS 环境诊断结束 ====="));
+        return;
+    }
+    log(QStringLiteral("[TLS] TCP 已连接，等待握手..."));
+
+    if (!socket.waitForEncrypted(15000)) {
+        log(QStringLiteral("[TLS] 握手失败: %1 (code=%2)")
+                .arg(socket.errorString())
+                .arg(static_cast<int>(socket.error())));
+        const QList<QSslError> errs = socket.sslHandshakeErrors();
+        log(QStringLiteral("[TLS] 握手错误数量: %1").arg(errs.size()));
+        for (const QSslError &e : errs) {
+            log(QStringLiteral("[TLS]   错误[%1]: %2")
+                    .arg(static_cast<int>(e.error()))
+                    .arg(e.errorString()));
+        }
+        log(QStringLiteral("[TLS] 对端证书: %1")
+                .arg(socket.peerCertificate().isNull()
+                         ? QStringLiteral("(无)")
+                         : socket.peerCertificate().subjectDisplayName()));
+        socket.abort();
+        log(QStringLiteral("===== TLS 环境诊断结束 ====="));
+        return;
+    }
+
+    log(QStringLiteral("[TLS] 握手成功"));
+    QString protocolName;
+    switch (socket.sessionProtocol()) {
+    case QSsl::TlsV1_3:
+        protocolName = QStringLiteral("TLS 1.3");
+        break;
+    case QSsl::TlsV1_2:
+        protocolName = QStringLiteral("TLS 1.2");
+        break;
+    case QSsl::TlsV1_1:
+        protocolName = QStringLiteral("TLS 1.1");
+        break;
+    case QSsl::TlsV1_0:
+        protocolName = QStringLiteral("TLS 1.0");
+        break;
+    default:
+        protocolName = QStringLiteral("其他(%1)").arg(static_cast<int>(socket.sessionProtocol()));
+        break;
+    }
+    log(QStringLiteral("[TLS] 协议版本: %1").arg(protocolName));
+    log(QStringLiteral("[TLS] 加密套件: %1").arg(socket.sessionCipher().name()));
+    log(QStringLiteral("[TLS] 对端证书: %1")
+            .arg(socket.peerCertificate().subjectDisplayName()));
+    socket.disconnectFromHost();
+    log(QStringLiteral("===== TLS 环境诊断结束 ====="));
+}
+
+
 void LauncherCore::flushProcessLogBuffer(const QString &source,
                                          QByteArray &buffer,
                                          const QByteArray &chunk,
@@ -384,6 +470,13 @@ QByteArray LauncherCore::getBytes(const QUrl &url,
         error->clear();
     }
 
+    // 首次网络请求时输出一次完整 TLS 环境诊断，便于排查 https 失败
+    static bool tlsEnvLogged = false;
+    if (!tlsEnvLogged) {
+        tlsEnvLogged = true;
+        logTlsEnvironment();
+    }
+
     const QString finalUrl = rewriteUrl(url.toString());
     log(QString("HTTP GET: %1").arg(finalUrl));
     QNetworkRequest request{QUrl(finalUrl)};
@@ -418,13 +511,36 @@ QByteArray LauncherCore::getBytes(const QUrl &url,
     const auto netErr = reply->error();
     if (netErr != QNetworkReply::NoError) {
         QString errMsg;
-        int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+        log(QStringLiteral("HTTP 诊断: url=%1").arg(url.toString()));
+        log(QStringLiteral("HTTP 诊断: error=%1 (%2)").arg(static_cast<int>(netErr)).arg(reply->errorString()));
+        log(QStringLiteral("HTTP 诊断: httpCode=%1").arg(httpCode));
+        log(QStringLiteral("HTTP 诊断: timedOut=%1").arg(timedOut ? QStringLiteral("是") : QStringLiteral("否")));
+        log(QStringLiteral("HTTP 诊断: 当前 TLS 后端=%1, supportsSsl=%2")
+                .arg(QSslSocket::activeBackend().isEmpty() ? QStringLiteral("(空)") : QSslSocket::activeBackend())
+                .arg(QSslSocket::supportsSsl() ? QStringLiteral("是") : QStringLiteral("否")));
+
         if (timedOut) {
             errMsg = QString("HTTP 超时(120s无活动): %1").arg(url.toString());
+        } else if (netErr == QNetworkReply::SslHandshakeFailedError) {
+            errMsg = QString("%1 -> SSL 握手失败（后端=%2, supportsSsl=%3）: %4")
+                         .arg(url.toString())
+                         .arg(QSslSocket::activeBackend())
+                         .arg(QSslSocket::supportsSsl() ? QStringLiteral("是") : QStringLiteral("否"))
+                         .arg(reply->errorString());
+        } else if (netErr == QNetworkReply::ProtocolUnknownError) {
+            errMsg = QString("%1 -> 协议不支持（后端=%2）: %3")
+                         .arg(url.toString())
+                         .arg(QSslSocket::activeBackend().isEmpty() ? QStringLiteral("(无可用后端)") : QSslSocket::activeBackend())
+                         .arg(reply->errorString());
         } else if (httpCode > 0) {
             errMsg = QString("%1 -> HTTP %2: %3").arg(url.toString()).arg(httpCode).arg(reply->errorString());
         } else {
-            errMsg = QString("%1 -> %2").arg(url.toString()).arg(reply->errorString());
+            errMsg = QString("%1 -> %2 (code=%3)")
+                         .arg(url.toString())
+                         .arg(reply->errorString())
+                         .arg(static_cast<int>(netErr));
         }
         if (error) {
             *error = errMsg;
@@ -2757,7 +2873,7 @@ bool LauncherCore::installLibraries(const VersionInstallContext &ctx, QString *e
             const QString fileName = QFileInfo(path).fileName();
             if (!isAllowedNativesJarForCurrentArch(fileName)) continue;
             totalFiles++;
-        } else if (!coords.isEmpty()) {
+        } else if (!coords.isEmpty() && downloads.isEmpty()) {
             const QString localPath = mavenCoordsToPath(coords);
             if (!localPath.isEmpty()) {
                 const QString path = librariesRoot() + "/" + localPath;
@@ -2818,7 +2934,10 @@ bool LauncherCore::installLibraries(const VersionInstallContext &ctx, QString *e
                                 checksum)) {
                 return false;
             }
-        } else if (!coords.isEmpty()) {
+        } else if (!coords.isEmpty() && downloads.isEmpty()) {
+            // Only legacy name-only libraries (no downloads object) get a
+            // synthesized main-jar download here. Libraries that ship only
+            // classifier jars (e.g. lwjgl-platform) must not fetch a main jar.
             const QString localPath = mavenCoordsToPath(coords);
             if (!localPath.isEmpty()) {
                 const QString path = librariesRoot() + "/" + localPath;
@@ -2826,9 +2945,10 @@ bool LauncherCore::installLibraries(const VersionInstallContext &ctx, QString *e
                 if (isAllowedNativesJarForCurrentArch(fileName)) {
                     currentFile++;
                     emit progressUpdated(currentFile, totalFiles, QString("下载库: %1 (%2/%3)").arg(fileName).arg(currentFile).arg(totalFiles));
-                    const QString dlUrl = !baseUrl.isEmpty()
-                                              ? mavenBuildDownloadUrl(baseUrl, coords)
-                                              : QString();
+                    const QString effectiveRepo = !baseUrl.isEmpty()
+                                              ? baseUrl
+                                              : QStringLiteral("https://libraries.minecraft.net/");
+                    const QString dlUrl = mavenBuildDownloadUrl(effectiveRepo, coords);
                     if (!dlUrl.isEmpty()) {
                         if (!downloadToFileWithProgress(QUrl(rewriteUrl(dlUrl)),
                                             path,
@@ -2974,9 +3094,9 @@ bool LauncherCore::extractNatives(const VersionInstallContext &ctx, QString *err
         log(QString("解压原生库: %1 -> %2")
                 .arg(QDir::toNativeSeparators(archivePath),
                      QDir::toNativeSeparators(nativesDir)));
-        const int code = QProcess::execute("tar", {"-xf", archivePath, "-C", nativesDir});
-        if (code != 0) {
-            *error = "原生库解压失败，请确认系统 tar 可用";
+        QString unzipError;
+        if (!ZipUtils::extractArchive(archivePath, nativesDir, &unzipError)) {
+            *error = QString("原生库解压失败: %1").arg(unzipError);
             log(QString("原生库解压失败: %1").arg(QDir::toNativeSeparators(archivePath)));
             return false;
         }
@@ -3097,19 +3217,10 @@ bool LauncherCore::extractZipArchive(const QString &zipPath, const QString &dest
     if (error && !error->isEmpty()) {
         return false;
     }
-    int tarCode = QProcess::execute("tar", {"-xf", zipPath, "-C", destDir});
-    if (tarCode == 0) {
-        return true;
-    }
-    log(QString("tar 解压失败(exit=%1)，尝试 PowerShell Expand-Archive").arg(tarCode));
-    const QString script = QString(
-        "$ErrorActionPreference = 'Stop'; "
-        "Expand-Archive -Path '%1' -DestinationPath '%2' -Force;"
-    ).arg(zipPath, destDir);
-    const int psCode = QProcess::execute("powershell", {"-NoProfile", "-Command", script});
-    if (psCode != 0) {
+    QString unzipError;
+    if (!ZipUtils::extractArchive(zipPath, destDir, &unzipError)) {
         if (error) {
-            *error = QString("压缩包解压失败(tar=%1, ps=%2)").arg(tarCode).arg(psCode);
+            *error = QString("压缩包解压失败: %1").arg(unzipError);
         }
         return false;
     }
@@ -3569,6 +3680,7 @@ QString LauncherCore::substituteArgument(const QString &arg,
     value.replace("${game_directory}", QDir::toNativeSeparators(ctx.instanceDir));
     value.replace("${assets_root}", QDir::toNativeSeparators(assetsRoot()));
     value.replace("${assets_index_name}", ctx.versionJson.value("assets").toString());
+    value.replace("${game_assets}", QDir::toNativeSeparators(assetsRoot()));
     value.replace("${auth_uuid}", account.uuid);
     value.replace("${auth_access_token}", account.accessToken);
     value.replace("${user_type}", account.type == Account::Type::Microsoft ? "msa" : "offline");
@@ -3623,10 +3735,44 @@ QStringList LauncherCore::buildJvmArguments(const VersionInstallContext &ctx,
         }
     }
 
+    if (!args.contains("-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true")) {
+        args << "-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true";
+    }
     args << "-Dfml.ignoreInvalidMinecraftCertificates=true"
          << "-Dfml.ignorePatchDiscrepancies=true";
     const QString clientJar = QDir::toNativeSeparators(versionsRoot() + "/" + ctx.versionId + "/" + ctx.versionId + ".jar");
     args << QString("-Dminecraft.client.jar=%1").arg(clientJar);
+
+    // LWJGL 2 (used by old versions) loads its native DLLs from java.library.path.
+    // Old version JSONs do not add this JVM option, so ensure the extracted
+    // natives directory is on the library path; otherwise the game crashes with
+    // "UnsatisfiedLinkError: no lwjgl in java.library.path" (white screen).
+    bool hasLibraryPathArg = false;
+    for (int i = 0; i < args.size(); ++i) {
+        if (args.at(i).startsWith("-Djava.library.path=")) {
+            hasLibraryPathArg = true;
+            break;
+        }
+    }
+    if (!hasLibraryPathArg) {
+        const QString nativesDir = QDir::toNativeSeparators(ctx.instanceDir + "/natives");
+        args << QString("-Djava.library.path=%1").arg(nativesDir);
+    }
+
+    // Legacy versions (pre-1.6, e.g. 1.1) have no "arguments.jvm" block, so the
+    // -cp/-classpath option is never added. Ensure the classpath is always passed
+    // to the JVM; otherwise java cannot load the main class (e.g. launchwrapper).
+    bool hasClasspathArg = false;
+    for (int i = 0; i < args.size(); ++i) {
+        const QString &a = args.at(i);
+        if (a == "-cp" || a == "-classpath" || a == "--class-path") {
+            hasClasspathArg = true;
+            break;
+        }
+    }
+    if (!hasClasspathArg && !classpath.isEmpty()) {
+        args << "-cp" << classpath;
+    }
 
     return args;
 }
@@ -3704,6 +3850,19 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
     m_gameProcess->setWorkingDirectory(workingDirectory);
     m_gameProcess->setProcessChannelMode(QProcess::SeparateChannels);
 
+    // When the launcher ships a Mesa opengl32.dll next to java.exe (used on
+    // machines without hardware OpenGL, e.g. Windows 7 RTM in VMware), help
+    // Mesa pick the software rasterizer and report a modern GL version so
+    // LWJGL 2 does not abort with "Pixel format not accelerated".
+    {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        if (!env.contains("GALLIUM_DRIVER")) env.insert("GALLIUM_DRIVER", "llvmpipe");
+        if (!env.contains("MESA_GL_VERSION_OVERRIDE")) env.insert("MESA_GL_VERSION_OVERRIDE", "3.3");
+        if (!env.contains("MESA_GLSL_VERSION_OVERRIDE")) env.insert("MESA_GLSL_VERSION_OVERRIDE", "330");
+        if (!env.contains("LIBGL_ALWAYS_SOFTWARE")) env.insert("LIBGL_ALWAYS_SOFTWARE", "1");
+        m_gameProcess->setProcessEnvironment(env);
+    }
+
     const QString launchJava = javaLogExecutablePath(javaPath);
     QString mainClassForLog = "<unknown>";
     for (int i = 0; i < arguments.size(); ++i) {
@@ -3720,6 +3879,19 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
     log(QString("准备启动 Minecraft %1").arg(versionId));
     log(QString("工作目录: %1").arg(QDir::toNativeSeparators(workingDirectory)));
     log(QString("Java 可执行文件: %1").arg(QDir::toNativeSeparators(launchJava)));
+    {
+        // Report whether a Mesa opengl32.dll sits next to the real java.exe,
+        // so software-OpenGL setup problems are visible in the log.
+        const QString javaDir = QFileInfo(javaPath).absolutePath();
+        const QString mesaGl = javaDir + "/opengl32.dll";
+        const QString mesaGallium = javaDir + "/libgallium_wgl.dll";
+        if (QFileInfo::exists(mesaGl)) {
+            log(QString("[OpenGL] Java dir has opengl32.dll: %1").arg(QDir::toNativeSeparators(mesaGl)));
+            log(QString("[OpenGL] libgallium_wgl.dll present: %1").arg(QFileInfo::exists(mesaGallium) ? QStringLiteral("yes") : QStringLiteral("NO (Mesa needs it too)")));
+        } else {
+            log(QString("[OpenGL] opengl32.dll not found in java dir, using system OpenGL. dir: %1").arg(QDir::toNativeSeparators(javaDir)));
+        }
+    }
     log(QString("入口: %1").arg(mainClassForLog));
 
     connect(m_gameProcess, &QProcess::started, this, [this, versionId]() {
@@ -4356,6 +4528,15 @@ bool LauncherCore::launchSelectedVersion(QString *error)
     if (!argumentListContainsFlag(args, "--module")) {
         const QString mainClass = ctx.versionJson.value("mainClass").toString();
         if (!mainClass.isEmpty()) args << mainClass;
+        {
+            const QString cpJoin = buildClasspath(ctx).join(classpathSeparator());
+            const bool hasLaunchWrapper = cpJoin.contains("launchwrapper", Qt::CaseInsensitive);
+            const QString loaderJson = resolveActiveLoaderJson(ctx.versionId);
+            log(QString("[Launch] mainClass=%1").arg(mainClass));
+            log(QString("[Launch] selectedLoaderJson=%1").arg(loaderJson.isEmpty() ? QStringLiteral("(vanilla)") : loaderJson));
+            log(QString("[Launch] classpath has launchwrapper=%1").arg(hasLaunchWrapper ? QStringLiteral("yes") : QStringLiteral("NO")));
+            log(QString("[Launch] classpath library count=%1").arg(buildClasspath(ctx).size()));
+        }
     }
     const auto substituteCommon = [&](const QString &s) -> QString {
         return substituteArgument(s, ctx, account, QString(), classpath, modulePath, useModulePath);
