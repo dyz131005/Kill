@@ -63,12 +63,16 @@ target_link_libraries(Kill PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network 
 # 优先 OpenSSL 后端（Win7 RTM 上 Schannel 缺 TLS 1.2，会报 Protocol type not supported）
 # 若 Qt 未启用 OpenSSL，则退回 Schannel
 if(KILL_STATIC_QT)
-    if(TARGET Qt6::QTlsBackendOpenSSLPlugin)
+    # 静态插件必须链接 *_init 目标，它才会生成 Q_IMPORT_PLUGIN 等价的注册代码；
+    # 只链接插件本体，符号会因未被引用而被链接器丢弃，后端不会注册。
+    if(TARGET Qt6::QTlsBackendOpenSSLPlugin_init)
+        target_link_libraries(Kill PRIVATE Qt6::QTlsBackendOpenSSLPlugin_init)
         target_link_libraries(Kill PRIVATE Qt6::QTlsBackendOpenSSLPlugin)
-        message(STATUS "Linked static TLS backend: Qt6::QTlsBackendOpenSSLPlugin")
-    elseif(TARGET Qt6::QSchannelBackendPlugin)
+        message(STATUS "Linked static TLS backend: OpenSSL")
+    elseif(TARGET Qt6::QSchannelBackendPlugin_init)
+        target_link_libraries(Kill PRIVATE Qt6::QSchannelBackendPlugin_init)
         target_link_libraries(Kill PRIVATE Qt6::QSchannelBackendPlugin)
-        message(STATUS "Linked static TLS backend: Qt6::QSchannelBackendPlugin")
+        message(STATUS "Linked static TLS backend: Schannel")
     else()
         message(WARNING "No static TLS backend plugin found; https may fail at runtime.")
     endif()
