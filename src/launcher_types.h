@@ -35,6 +35,8 @@ struct Account {
 
 struct LauncherVersionProfile {
     bool versionIsolation = true;
+    // Software OpenGL override for this version: -1 = follow global, 0 = force off, 1 = force on.
+    int softwareOpenGL = -1;
     QString javaPath;
     QString javaArgs;
     QString extraGameArgs;
@@ -63,6 +65,7 @@ struct LauncherConfig {
     int maxMemoryMb = 4096;
     bool verifyFiles = true;
     bool versionIsolation = true;
+    bool softwareOpenGL = false;
     QStringList managedMods;
     QStringList managedResourcePacks;
     QStringList managedModpacks;

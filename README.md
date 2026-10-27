@@ -212,3 +212,22 @@ CurseForge 官方接口对第三方启动器要求 CF Core API Key，未填写�
 | 日志里提示「无法创建目录 / 拒绝访问」但资源管理器能写 | Windows 安全中心 ASR 规则或 `gameflt.sys` 等 Minifilter 拦截特定进程路径 | 看日志输出的「路径逐段诊断 + Win32 错误码」；建议把实例 / 游戏目录迁到 D 盘 |
 | CurseForge 页面一直空 | 没填 CF Core API Key | 设置里填 Key 后重启 |
 
+
+---
+
+## 📄 开源许可
+
+本项目采用双许可结构：
+
+- 应用层源代码：MIT License（见 LICENSE）。
+- Qt 库（静态链接）：LGPLv3（见 LICENSE.LGPLv3，GPLv3 全文见 LICENSE.GPLv3）。
+
+### 关于静态链接 Qt（LGPLv3 合规）
+
+本项目以静态链接方式使用 Qt 6.8.4（LGPLv3）。为满足 LGPLv3 义务：
+
+- 所用 Qt 的完整源码随仓库提供（`qt-static-src/`），含本项目为兼容 Win7 所做的修改；
+- 用户可修改 Qt 源码并用 `build_static.bat` 重新链接出可运行的 exe，详见 RELINKING.md；
+- 第三方组件与对 Qt 的修改说明见 THIRD_PARTY_NOTICES.md。
+
+> 说明：使用 Qt 的 LGPLv3 模块（Core / Gui / Widgets / Network / Svg）不会让本项目整体变为 GPL；应用层仍可用 MIT，只要满足上述「提供源码 + 可重新链接」义务即可。请勿引入 Qt 的 GPL-only 模块，否则整个项目需转为 GPL。

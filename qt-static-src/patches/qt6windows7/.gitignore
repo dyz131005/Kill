@@ -1,0 +1,5 @@
+# Archives produced by make_win7_archive.pl
+*.7z
+
+# Its staging folder, left behind if a run is interrupted
+_win7_archive_staging/

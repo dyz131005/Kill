@@ -926,6 +926,7 @@ LauncherVersionProfile LauncherCore::effectiveVersionProfile(const QString &vers
     profile.extraGameArgs = config.extraGameArgs;
     profile.minMemoryMb = config.minMemoryMb;
     profile.maxMemoryMb = config.maxMemoryMb;
+    profile.softwareOpenGL = config.softwareOpenGL ? 1 : 0;
 
     const auto it = config.versionProfiles.constFind(versionId);
     if (it != config.versionProfiles.constEnd()) {
@@ -939,6 +940,9 @@ LauncherVersionProfile LauncherCore::effectiveVersionProfile(const QString &vers
         }
         if (stored.maxMemoryMb > 0) {
             profile.maxMemoryMb = stored.maxMemoryMb;
+        }
+        if (stored.softwareOpenGL != -1) {
+            profile.softwareOpenGL = stored.softwareOpenGL;
         }
     }
 
@@ -3735,7 +3739,8 @@ QStringList LauncherCore::buildJvmArguments(const VersionInstallContext &ctx,
         }
     }
 
-    if (!args.contains("-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true")) {
+    if (profile.softwareOpenGL == 1
+        && !args.contains("-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true")) {
         args << "-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true";
     }
     args << "-Dfml.ignoreInvalidMinecraftCertificates=true"
@@ -3828,6 +3833,7 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
                                                 const QStringList &arguments,
                                                 const QString &workingDirectory,
                                                 const QString &versionId,
+                                                bool softwareOpenGL,
                                                 QString *error)
 {
     if (m_gameProcess && m_gameProcess->state() != QProcess::NotRunning) {
@@ -3850,11 +3856,12 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
     m_gameProcess->setWorkingDirectory(workingDirectory);
     m_gameProcess->setProcessChannelMode(QProcess::SeparateChannels);
 
-    // When the launcher ships a Mesa opengl32.dll next to java.exe (used on
-    // machines without hardware OpenGL, e.g. Windows 7 RTM in VMware), help
-    // Mesa pick the software rasterizer and report a modern GL version so
-    // LWJGL 2 does not abort with "Pixel format not accelerated".
-    {
+    // When software OpenGL is enabled (per-version or global setting) and a Mesa
+    // opengl32.dll ships next to java.exe (machines without hardware OpenGL,
+    // e.g. Windows 7 RTM in VMware), help Mesa pick the software rasterizer and
+    // report a modern GL version so LWJGL 2 does not abort with
+    // "Pixel format not accelerated".
+    if (softwareOpenGL) {
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         if (!env.contains("GALLIUM_DRIVER")) env.insert("GALLIUM_DRIVER", "llvmpipe");
         if (!env.contains("MESA_GL_VERSION_OVERRIDE")) env.insert("MESA_GL_VERSION_OVERRIDE", "3.3");
@@ -3942,6 +3949,7 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
                 } else {
                     log(QString("Minecraft 正常退出: 版本 %1").arg(versionId));
                 }
+                emit gameExited(exitCode);
             });
 
     m_gameProcess->start(launchJava, arguments);
@@ -4552,7 +4560,7 @@ bool LauncherCore::launchSelectedVersion(QString *error)
                  activeLoaderJson.isEmpty() ? QString() : QString(" (%1)").arg(activeLoaderJson)));
     log(QString("Java: %1").arg(javaPath));
     log(QString("账户: %1").arg(account.displayName()));
-    if (!startTrackedMinecraftProcess(javaPath, args, ctx.instanceDir, config.selectedVersion, error)) {
+    if (!startTrackedMinecraftProcess(javaPath, args, ctx.instanceDir, config.selectedVersion, profile.softwareOpenGL == 1, error)) {
         return false;
     }
     return true;
@@ -4780,7 +4788,7 @@ bool LauncherCore::launchSelectedVersionWithDialog(QString *error, QWidget *pare
                  activeLoaderJson.isEmpty() ? QString() : QString(" (%1)").arg(activeLoaderJson)));
     log(QString("Java: %1").arg(javaPath));
     log(QString("账户: %1").arg(account.displayName()));
-    if (!startTrackedMinecraftProcess(javaPath, args, ctx.instanceDir, config.selectedVersion, error)) {
+    if (!startTrackedMinecraftProcess(javaPath, args, ctx.instanceDir, config.selectedVersion, profile.softwareOpenGL == 1, error)) {
         return false;
     }
 

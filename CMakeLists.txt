@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Kill VERSION 1.7.0 LANGUAGES CXX RC)
+project(Kill VERSION 1.8.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,6 +49,13 @@ set(KILL_SOURCES
     src/download_manager.cpp
     src/zip_utils.h
     src/zip_utils.cpp
+    src/plugins/plugin_api.h
+    src/plugins/plugin_guard.h
+    src/plugins/plugin_guard.cpp
+    src/plugins/plugin_manager.h
+    src/plugins/plugin_manager.cpp
+    src/plugins_tab.cpp
+    src/plugin_ui_apply.cpp
     resources.qrc
 )
 

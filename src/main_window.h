@@ -6,6 +6,7 @@
 #include <QMainWindow>
 
 #include "launcher_core.h"
+#include "plugins/plugin_manager.h"
 
 class QButtonGroup;
 class QCheckBox;
@@ -55,6 +56,9 @@ private:
     QWidget *buildInstallLoaderTab();
     QWidget *buildSettingsTab();
     QWidget *buildLogsTab();
+    QWidget *buildPluginsTab();
+    void refreshPluginsTab();
+    void applyPluginUi();
     QWidget *buildAboutPage();
     QWidget *buildAnnouncementBar();
     void showAboutPage();
@@ -112,6 +116,9 @@ private:
     void runMicrosoftDeviceLoginFlow();
 
     LauncherCore m_core;
+    PluginManager *m_pluginManager = nullptr;
+    QWidget *m_pluginsTab = nullptr;
+    QListWidget *m_pluginsList = nullptr;
     QJsonArray m_remoteVersions;
 
     QComboBox *m_homeVersionCombo = nullptr;
@@ -176,6 +183,7 @@ private:
     QSpinBox *m_maxMemorySpin = nullptr;
     QCheckBox *m_verifyFilesCheck = nullptr;
     QCheckBox *m_versionIsolationCheck = nullptr;
+    QCheckBox *m_softwareOpenGLCheck = nullptr;
 
     QPlainTextEdit *m_logsEdit = nullptr;
     QString m_logFilePath;
@@ -224,6 +232,7 @@ private:
     void refreshManageInstanceList();
     static QString manageInstanceIconFor(const QString &versionId);
     QCheckBox *m_manageIsolationCheck = nullptr;
+    QComboBox *m_manageSoftwareOpenGLCombo = nullptr;
     QLineEdit *m_manageJavaPathEdit = nullptr;
     QLineEdit *m_manageJavaArgsEdit = nullptr;
     QLineEdit *m_manageGameArgsEdit = nullptr;

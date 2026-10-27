@@ -144,6 +144,7 @@ public:
 signals:
     void logMessage(const QString &message);
     void progressStarted(const QString &message);
+    void gameExited(int exitCode);
     void progressUpdated(int value, int maximum, const QString &message);
     void progressFinished(const QString &message);
 
@@ -313,6 +314,7 @@ private:
                                       const QStringList &arguments,
                                       const QString &workingDirectory,
                                       const QString &versionId,
+                                      bool softwareOpenGL,
                                       QString *error);
 
     ConfigStore m_configStore;

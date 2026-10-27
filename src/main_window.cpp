@@ -432,6 +432,45 @@ MainWindow::MainWindow(QWidget *parent)
     m_networkManager = new QNetworkAccessManager(this);
     buildUi();
     m_logFilePath = logFilePath();
+
+    // 初始化插件系统：扫描 exe 同目录 plugins/ 下的 DLL，加载已授权插件
+    {
+        const QString pluginsDir = QCoreApplication::applicationDirPath() + "/plugins";
+        m_pluginManager = new PluginManager(this);
+        m_pluginManager->setNetworkManager(m_networkManager);
+        m_pluginManager->setGameDirectory(m_core.configStore()->config().minecraftDir);
+        connect(m_pluginManager, &PluginManager::logMessage, this, &MainWindow::appendLog);
+        m_pluginManager->scan(pluginsDir);
+
+        const auto entries = m_pluginManager->entries();
+        for (const PluginEntry &e : entries) {
+            if (e.forbidden) {
+                appendLog(QString("插件 %1 申请了被禁止的权限，已跳过").arg(e.name));
+                continue;
+            }
+            const bool needsConfirm = (e.permissions & (KILL_PERM_WRITE_FILE | KILL_PERM_DELETE_FILE | KILL_PERM_RUN_PROCESS | KILL_PERM_NETWORK | KILL_PERM_WRITE_CONFIG)) != 0;
+            if (needsConfirm && !m_pluginManager->isAuthorized(e.id)) {
+                const auto ret = QMessageBox::warning(this, "插件授权请求",
+                    QString("插件「%1」申请以下危险权限：%2是否授权？").arg(e.name, PluginManager::permissionSummary(e.permissions)),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (ret == QMessageBox::Yes) m_pluginManager->setAuthorized(e.id, true);
+            }
+        }
+        m_pluginManager->loadAllAuthorized();
+        applyPluginUi();
+
+        const auto pages = m_pluginManager->pages();
+        for (const PluginPageRegistration &pg : pages) {
+            QWidget *w = pg.factory ? pg.factory() : nullptr;
+            if (w) m_mainTabWidget->addTab(w, pg.title);
+        }
+
+        m_pluginManager->fireHook("app.startup", QJsonObject{});
+    }
+
+    connect(&m_core, &LauncherCore::gameExited, this, [this](int code) {
+        if (m_pluginManager) m_pluginManager->fireHook("game.after_exit", QJsonObject{{ "exitCode", code }});
+    });
     connect(&m_core, &LauncherCore::logMessage, this, &MainWindow::appendLog);
     appendLog(QString("日志文件: %1").arg(QDir::toNativeSeparators(m_logFilePath)));
     loadConfigToUi();
@@ -464,6 +503,8 @@ void MainWindow::buildUi()
     tabs->addTab(buildVersionManagementTab(), "版本管理");
     tabs->addTab(buildSettingsTab(), "设置");
     tabs->addTab(buildLogsTab(), "日志");
+    m_pluginsTab = buildPluginsTab();
+    tabs->addTab(m_pluginsTab, "插件");
     tabsLayout->addWidget(tabs, 1);
 
     m_mainStackedWidget->addWidget(m_mainTabsPage);
@@ -2575,6 +2616,10 @@ QWidget *MainWindow::buildHomeTab()
             m_core.saveConfig(nullptr);
         }
         QString error;
+        if (m_pluginManager) {
+            LauncherConfig &pc = m_core.configStore()->config();
+            m_pluginManager->fireHook("game.before_launch", QJsonObject{{ "version", pc.selectedVersion }});
+        }
         if (!m_core.launchSelectedVersionWithDialog(&error, this)) {
             if (!error.contains("操作已取消") && !error.contains("下载已取消")) {
                 appendLog(QString("启动失败: %1").arg(error));
@@ -2680,6 +2725,7 @@ QWidget *MainWindow::buildSettingsTab()
     m_maxMemorySpin = new QSpinBox(baseBox);
     m_verifyFilesCheck = new QCheckBox("启用文件校验", baseBox);
     m_versionIsolationCheck = new QCheckBox("启用版本隔离", baseBox);
+    m_softwareOpenGLCheck = new QCheckBox("强制软件 OpenGL (虚拟机/无显卡加速时勾选)", baseBox);
 
     m_minMemorySpin->setRange(512, 65536);
     m_maxMemorySpin->setRange(512, 65536);
@@ -2724,6 +2770,7 @@ QWidget *MainWindow::buildSettingsTab()
     baseLayout->addRow("最大内存 (MB)", m_maxMemorySpin);
     baseLayout->addRow("", m_verifyFilesCheck);
     baseLayout->addRow("", m_versionIsolationCheck);
+    baseLayout->addRow("", m_softwareOpenGLCheck);
     baseLayout->addRow("", saveButton);
 
     layout->addWidget(baseBox);
@@ -2870,7 +2917,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.7", infoBox);
+    auto *versionLabel = new QLabel("1.8", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -3011,6 +3058,7 @@ void MainWindow::loadConfigToUi()
     m_maxMemorySpin->setValue(config.maxMemoryMb);
     m_verifyFilesCheck->setChecked(config.verifyFiles);
     m_versionIsolationCheck->setChecked(config.versionIsolation);
+    m_softwareOpenGLCheck->setChecked(config.softwareOpenGL);
 
     {
         const QString mode = config.mirrorMode.trimmed().toLower();
@@ -3052,6 +3100,7 @@ bool MainWindow::saveUiToConfig()
     config.maxMemoryMb = m_maxMemorySpin->value();
     config.verifyFiles = m_verifyFilesCheck->isChecked();
     config.versionIsolation = m_versionIsolationCheck->isChecked();
+    config.softwareOpenGL = m_softwareOpenGLCheck->isChecked();
     config.selectedVersion = currentManagedVersion();
     config.selectedAccountIndex = m_homeAccountCombo->currentData().toInt();
 
@@ -3223,6 +3272,11 @@ void MainWindow::loadVersionProfileToUi()
         const QSignalBlocker blocker(m_manageIsolationCheck);
         m_manageIsolationCheck->setChecked(profile.versionIsolation);
     }
+    if (m_manageSoftwareOpenGLCombo) {
+        const QSignalBlocker swBlocker(m_manageSoftwareOpenGLCombo);
+        const int swIdx = m_manageSoftwareOpenGLCombo->findData(profile.softwareOpenGL);
+        m_manageSoftwareOpenGLCombo->setCurrentIndex(swIdx >= 0 ? swIdx : 0);
+    }
     if (m_manageJavaPathEdit) m_manageJavaPathEdit->setText(profile.javaPath);
     if (m_manageJavaArgsEdit) m_manageJavaArgsEdit->setText(profile.javaArgs);
     if (m_manageGameArgsEdit) m_manageGameArgsEdit->setText(profile.extraGameArgs);
@@ -3249,6 +3303,7 @@ bool MainWindow::saveCurrentVersionProfile()
 
     LauncherVersionProfile profile;
     profile.versionIsolation = m_manageIsolationCheck->isChecked();
+    profile.softwareOpenGL = m_manageSoftwareOpenGLCombo->currentData().toInt();
     profile.javaPath = m_manageJavaPathEdit->text().trimmed();
     profile.javaArgs = m_manageJavaArgsEdit->text().trimmed();
     profile.extraGameArgs = m_manageGameArgsEdit->text().trimmed();
@@ -5937,6 +5992,11 @@ QWidget *MainWindow::buildVersionManagementTab()
     auto *profileLayout = new QFormLayout(profileBox);
     profileLayout->setVerticalSpacing(10);
     m_manageIsolationCheck = new QCheckBox("启用当前版本隔离", profileBox);
+    m_manageSoftwareOpenGLCombo = new QComboBox(profileBox);
+    m_manageSoftwareOpenGLCombo->addItem("跟随全局设置", -1);
+    m_manageSoftwareOpenGLCombo->addItem("强制开启", 1);
+    m_manageSoftwareOpenGLCombo->addItem("强制关闭", 0);
+    m_manageSoftwareOpenGLCombo->setMinimumHeight(lineEditHeight);
     m_manageJavaPathEdit = new QLineEdit(profileBox);
     m_manageJavaPathEdit->setMinimumHeight(lineEditHeight);
     m_manageJavaArgsEdit = new QLineEdit(profileBox);
@@ -5975,6 +6035,7 @@ QWidget *MainWindow::buildVersionManagementTab()
 
     profileLayout->addRow("基础游戏版本", m_manageBaseVersionLabel);
     profileLayout->addRow("", m_manageIsolationCheck);
+    profileLayout->addRow("软件 OpenGL", m_manageSoftwareOpenGLCombo);
     profileLayout->addRow("实例目录", m_manageInstanceDirLabel);
     profileLayout->addRow("模组目录", m_manageModsDirLabel);
     profileLayout->addRow("世界目录", m_manageWorldsDirLabel);

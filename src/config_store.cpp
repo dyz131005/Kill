@@ -75,7 +75,8 @@ QJsonObject LauncherVersionProfile::toJson() const
         {"minMemoryMb", minMemoryMb},
         {"maxMemoryMb", maxMemoryMb},
         {"selectedLoaderType", selectedLoaderType},
-        {"selectedLoaderJson", selectedLoaderJson}
+        {"selectedLoaderJson", selectedLoaderJson},
+        {"softwareOpenGL", softwareOpenGL}
     };
 }
 
@@ -90,6 +91,7 @@ LauncherVersionProfile LauncherVersionProfile::fromJson(const QJsonObject &objec
     profile.maxMemoryMb = object.value("maxMemoryMb").toInt(profile.maxMemoryMb);
     profile.selectedLoaderType = object.value("selectedLoaderType").toString();
     profile.selectedLoaderJson = object.value("selectedLoaderJson").toString();
+    profile.softwareOpenGL = object.value("softwareOpenGL").toInt(profile.softwareOpenGL);
     return profile;
 }
 
@@ -129,6 +131,7 @@ QJsonObject LauncherConfig::toJson() const
         {"maxMemoryMb", maxMemoryMb},
         {"verifyFiles", verifyFiles},
         {"versionIsolation", versionIsolation},
+        {"softwareOpenGL", softwareOpenGL},
         {"managedMods", toArray(managedMods)},
         {"managedResourcePacks", toArray(managedResourcePacks)},
         {"managedModpacks", toArray(managedModpacks)},
@@ -169,6 +172,7 @@ LauncherConfig LauncherConfig::fromJson(const QJsonObject &object)
     config.maxMemoryMb = object.value("maxMemoryMb").toInt(config.maxMemoryMb);
     config.verifyFiles = object.value("verifyFiles").toBool(config.verifyFiles);
     config.versionIsolation = object.value("versionIsolation").toBool(config.versionIsolation);
+    config.softwareOpenGL = object.value("softwareOpenGL").toBool(config.softwareOpenGL);
     config.selectedAccountIndex = object.value("selectedAccountIndex").toInt(-1);
 
     auto fromArray = [](const QJsonValue &value) {

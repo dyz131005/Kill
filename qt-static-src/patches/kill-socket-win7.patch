@@ -1,0 +1,31 @@
+--- a/qtbase/src/network/socket/qnativesocketengine_win.cpp
++++ b/qtbase/src/network/socket/qnativesocketengine_win.cpp
+@@ createNewSocket @@
+-    SOCKET socket = ::WSASocket(protocol, type, 0, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT | WSA_FLAG_OVERLAPPED);
+-    if (socket == INVALID_SOCKET) {
+-        int err = WSAGetLastError();
++    // Windows 7 RTM (and pre-Win8 in general) does not understand
++    // WSA_FLAG_NO_HANDLE_INHERIT; passing it makes WSASocket fail with
++    // WSAEPROTOTYPE ("Protocol type not supported"). On those systems create
++    // the socket without the flag and clear the inherit bit manually instead.
++    const bool supportsNoHandleInherit =
++        QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows8;
++    DWORD sockFlags = WSA_FLAG_OVERLAPPED;
++    if (supportsNoHandleInherit)
++        sockFlags |= WSA_FLAG_NO_HANDLE_INHERIT;
++
++    SOCKET socket = ::WSASocket(protocol, type, 0, NULL, 0, sockFlags);
++    if (socket == INVALID_SOCKET && supportsNoHandleInherit) {
++        // Defensive fallback: if the flag was somehow rejected, retry without it.
++        int err = WSAGetLastError();
++        if (err == WSAEPROTOTYPE || err == WSAEINVAL) {
++            socket = ::WSASocket(protocol, type, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
++        }
++    }
++    if (socket != INVALID_SOCKET && !supportsNoHandleInherit) {
++        // Emulate WSA_FLAG_NO_HANDLE_INHERIT on pre-Win8 by clearing the
++        // inherit flag so child processes do not inherit the socket handle.
++        ::SetHandleInformation(reinterpret_cast<HANDLE>(socket), HANDLE_FLAG_INHERIT, 0);
++    }
++    if (socket == INVALID_SOCKET) {
++        int err = WSAGetLastError();
