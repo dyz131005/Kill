@@ -71,6 +71,8 @@ struct LauncherConfig {
     // Storage location mode for config/java/plugins: "install" | "appdata" | "custom"
     QString storageMode = "install";
     QString customStorageDir;
+    // When true, skip the Win7 multiplayer compatibility warning entirely.
+    bool forceEnableMultiplayerOnWin7 = false;
     QStringList managedMods;
     QStringList managedResourcePacks;
     QStringList managedModpacks;

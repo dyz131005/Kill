@@ -39,6 +39,7 @@
 #include <QGraphicsOpacityEffect>
 #include "widget_effects.h"
 #include "crash_window.h"
+#include "acrylic.h"
 #include <QCloseEvent>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -433,6 +434,10 @@ MainWindow::MainWindow(QWidget *parent)
 {
     resize(1280, 860);
     setWindowTitle("Kill - Minecraft Launcher");
+    // NOTE: WA_TranslucentBackground is intentionally NOT set. A translucent
+    // top-level window forces Windows to recompute the blur every frame during
+    // drag/resize, which made moving and resizing feel laggy. We keep the window
+    // opaque for smooth interaction and instead give the *cards* a frosted look.
     m_networkManager = new QNetworkAccessManager(this);
     buildUi();
     m_logFilePath = logFilePath();
@@ -514,6 +519,9 @@ void MainWindow::buildUi()
 
     auto *tabs = new QTabWidget(m_mainTabsPage);
     m_mainTabWidget = tabs;
+    // Full-width tab bar so the blue strip spans the whole window (PCL2-like).
+    tabs->tabBar()->setExpanding(true);
+    tabs->setDocumentMode(true);
     tabs->addTab(buildHomeTab(), "启动");
     tabs->addTab(buildAccountsTab(), "账户");
     tabs->addTab(buildDownloadTab(), "下载");
@@ -522,6 +530,8 @@ void MainWindow::buildUi()
     tabs->addTab(buildLogsTab(), "日志");
     m_pluginsTab = buildPluginsTab();
     tabs->addTab(m_pluginsTab, "插件");
+    m_multiplayerTab = buildMultiplayerTab();
+    m_multiplayerTabIndex = tabs->addTab(m_multiplayerTab, "联机");
     tabsLayout->addWidget(tabs, 1);
 
     // Smooth slide transition for main tab page switches (respects animation level).
@@ -552,6 +562,9 @@ void MainWindow::buildUi()
         WidgetAnim::slideIn(page, /*fromRight=*/!movedRight, 240);
     });
 
+    // Win7 multiplayer compatibility guard (shows an in-tab overlay on Win7).
+    applyWin7MultiplayerGuard();
+
     m_mainStackedWidget->addWidget(m_mainTabsPage);
     m_aboutPage = buildAboutPage();
     m_mainStackedWidget->addWidget(m_aboutPage);
@@ -577,6 +590,11 @@ void MainWindow::buildUi()
     statusLayout->addWidget(m_progressBar);
 
     mainLayout->addWidget(statusWidget);
+    centralWidget->setObjectName("killCentral");
+    centralWidget->setAttribute(Qt::WA_StyledBackground, true);
+    centralWidget->setStyleSheet(
+        "#killCentral { background-color: #f9fafb; }"
+    );
     setCentralWidget(centralWidget);
 
     connect(&m_core, &LauncherCore::progressStarted, this, [this](const QString &message) {
@@ -734,18 +752,20 @@ void MainWindow::applyTheme(bool dark)
         baseStyle = QString(
             "QMainWindow { background-color: #111827; }"
             "QWidget { color: #e5e7eb; }"
-            "QTabWidget::pane { border: 1px solid #374151; background-color: #111827; top: -1px; }"
+            "QTabWidget::pane { border: none; background-color: #111827; top: 0px; }"
+            "QTabWidget::tab-bar { left: 0px; }"
+            "QTabBar { background-color: #2563eb; qproperty-drawBase: 0; }"
             "QTabBar::tab {"
-            "  background: #1f2937; color: #9ca3af; padding: 10px 22px;"
-            "  border: 1px solid #374151; border-bottom: none;"
-            "  border-top-left-radius: 6px; border-top-right-radius: 6px;"
-            "  margin-right: 4px; font-size: 13px; font-weight: 500;"
+            "  background: rgba(255,255,255,0.18); color: #ffffff;"
+            "  padding: 6px 22px; margin: 8px 4px;"
+            "  border: none; border-radius: 15px;"
+            "  font-size: 13px; font-weight: 600; min-height: 18px;"
             "}"
             "QTabBar::tab:selected {"
-            "  background: #111827; color: #60a5fa;"
-            "  border-bottom: 2px solid #3b82f6;"
+            "  background: #ffffff; color: #2563eb;"
             "}"
-            "QTabBar::tab:hover:!selected { background: #374151; color: #e5e7eb; }"
+            "QTabBar::tab:hover:!selected { background: rgba(255,255,255,0.35); color: #ffffff; }"
+            "QTabBar::tab:disabled { color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.06); }"
             "QGroupBox {"
             "  border: 1px solid #374151; border-radius: 8px;"
             "  margin-top: 14px; padding-top: 8px;"
@@ -815,18 +835,20 @@ void MainWindow::applyTheme(bool dark)
         baseStyle = QString(
             "QMainWindow { background-color: #f9fafb; }"
             "QWidget { color: #111827; }"
-            "QTabWidget::pane { border: 1px solid #e5e7eb; background-color: #f9fafb; top: -1px; }"
+            "QTabWidget::pane { border: none; background-color: #f9fafb; top: 0px; }"
+            "QTabWidget::tab-bar { left: 0px; }"
+            "QTabBar { background-color: #2563eb; qproperty-drawBase: 0; }"
             "QTabBar::tab {"
-            "  background: #f3f4f6; color: #6b7280; padding: 10px 22px;"
-            "  border: 1px solid #e5e7eb; border-bottom: none;"
-            "  border-top-left-radius: 6px; border-top-right-radius: 6px;"
-            "  margin-right: 4px; font-size: 13px; font-weight: 500;"
+            "  background: rgba(255,255,255,0.18); color: #ffffff;"
+            "  padding: 6px 22px; margin: 8px 4px;"
+            "  border: none; border-radius: 15px;"
+            "  font-size: 13px; font-weight: 600; min-height: 18px;"
             "}"
             "QTabBar::tab:selected {"
             "  background: #ffffff; color: #2563eb;"
-            "  border-bottom: 2px solid #3b82f6;"
             "}"
-            "QTabBar::tab:hover:!selected { background: #e5e7eb; color: #111827; }"
+            "QTabBar::tab:hover:!selected { background: rgba(255,255,255,0.35); color: #ffffff; }"
+            "QTabBar::tab:disabled { color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.06); }"
             "QGroupBox {"
             "  border: 1px solid #e5e7eb; border-radius: 8px;"
             "  margin-top: 14px; padding-top: 8px;"
@@ -888,9 +910,18 @@ void MainWindow::applyTheme(bool dark)
             "QProgressBar::chunk { background-color: #3b82f6; border-radius: 5px; }"
         );
     }
+    // Apply the stylesheet ONLY to this window (not QApplication). App-wide QSS
+    // forces every widget to be re-polished and, together with per-widget alpha
+    // compositing, made window drag/resize laggy.
     this->setStyleSheet(baseStyle);
     if (auto *app = qobject_cast<QApplication *>(QCoreApplication::instance())) {
-        app->setStyleSheet(baseStyle);
+        app->setStyleSheet(QString());
+    }
+
+    if (auto *central = centralWidget()) {
+        central->setStyleSheet(dark
+            ? QStringLiteral("#killCentral { background-color: #111827; }")
+            : QStringLiteral("#killCentral { background-color: #f9fafb; }"));
     }
 
     const QString topBarLight =
@@ -1091,6 +1122,20 @@ void MainWindow::animateStackSwitch(QStackedWidget *stack, int index)
     // index -> slides in from below.
     const bool movedDown = (index > prev);
     WidgetAnim::slideInVertical(page, /*fromBottom=*/movedDown, 220);
+}
+
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+    // The OS acrylic backdrop is intentionally NOT applied: it forces DWM to
+    // recompute the blur on every window move/resize, which caused the huge
+    // drag/resize lag. The window is opaque, so the backdrop was invisible
+    // anyway. We only enable rounded corners + dark title bar (cheap, static).
+    if (!m_acrylicApplied) {
+        m_acrylicApplied = true;
+        Acrylic::enableRoundedCorners(this);
+        Acrylic::setDarkTitleBar(this, m_isDarkTheme);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -2880,6 +2925,7 @@ QWidget *MainWindow::buildSettingsTab()
     m_verifyFilesCheck = new QCheckBox("启用文件校验", baseBox);
     m_versionIsolationCheck = new QCheckBox("启用版本隔离", baseBox);
     m_softwareOpenGLCheck = new QCheckBox("强制软件 OpenGL (虚拟机/无显卡加速时勾选)", baseBox);
+    m_forceMpOnWin7Check = new QCheckBox("强制禁用 Win7 联机兼容性检测（永久跳过联机提示）", baseBox);
     m_animationCombo = new QComboBox(baseBox);
     m_animationCombo->addItem("完全开启（全部过渡动画）", 2);
     m_animationCombo->addItem("部分（仅淡入淡出）", 1);
@@ -2929,6 +2975,7 @@ QWidget *MainWindow::buildSettingsTab()
     baseLayout->addRow("", m_verifyFilesCheck);
     baseLayout->addRow("", m_versionIsolationCheck);
     baseLayout->addRow("", m_softwareOpenGLCheck);
+    baseLayout->addRow("", m_forceMpOnWin7Check);
     baseLayout->addRow("界面动画", m_animationCombo);
     baseLayout->addRow("", saveButton);
 
@@ -3066,6 +3113,24 @@ QWidget *MainWindow::buildSettingsTab()
     connect(javaDownload, &QPushButton::clicked, this, [this] {
         downloadJava();
     });
+
+    // Real-time: toggling the Win7 multiplayer check saves immediately and
+    // re-enables/disables the multiplayer tab without needing a restart.
+    if (m_forceMpOnWin7Check) {
+        connect(m_forceMpOnWin7Check, &QCheckBox::toggled, this, [this](bool checked) {
+            m_core.configStore()->config().forceEnableMultiplayerOnWin7 = checked;
+            m_core.configStore()->save();
+            if (m_mainTabWidget && m_multiplayerTabIndex >= 0 && m_multiplayerTabIndex < m_mainTabWidget->count()) {
+                // When the permanent override is on, the multiplayer tab is always enabled.
+                if (checked) {
+                    m_mainTabWidget->setTabEnabled(m_multiplayerTabIndex, true);
+                    m_multiplayerDisabled = false;
+                }
+            }
+            appendLog(checked ? "已开启：永久跳过 Win7 联机兼容性检测。"
+                              : "已关闭：恢复 Win7 联机兼容性检测。");
+        });
+    }
 
     connect(saveButton, &QPushButton::clicked, this, [this] {
         if (!saveUiToConfig()) {
@@ -3322,11 +3387,16 @@ void MainWindow::loadConfigToUi()
     m_verifyFilesCheck->setChecked(config.verifyFiles);
     m_versionIsolationCheck->setChecked(config.versionIsolation);
     m_softwareOpenGLCheck->setChecked(config.softwareOpenGL);
+    if (m_forceMpOnWin7Check) m_forceMpOnWin7Check->setChecked(config.forceEnableMultiplayerOnWin7);
     if (m_animationCombo) {
         const int idx = m_animationCombo->findData(config.animationLevel);
         if (idx >= 0) m_animationCombo->setCurrentIndex(idx);
     }
     if (m_storageModeCombo) {
+        // Block signals so programmatically restoring the saved mode does NOT
+        // trigger the combo's currentIndexChanged handler (which pops a folder
+        // picker for "custom" mode) on every startup.
+        const QSignalBlocker blocker(m_storageModeCombo);
         const QString mode = m_core.configStore()->currentStorageMode();
         const int idx = m_storageModeCombo->findData(mode);
         if (idx >= 0) m_storageModeCombo->setCurrentIndex(idx);
@@ -3376,6 +3446,7 @@ bool MainWindow::saveUiToConfig()
     config.verifyFiles = m_verifyFilesCheck->isChecked();
     config.versionIsolation = m_versionIsolationCheck->isChecked();
     config.softwareOpenGL = m_softwareOpenGLCheck->isChecked();
+    if (m_forceMpOnWin7Check) config.forceEnableMultiplayerOnWin7 = m_forceMpOnWin7Check->isChecked();
     if (m_animationCombo) {
         config.animationLevel = m_animationCombo->currentData().toInt();
     }

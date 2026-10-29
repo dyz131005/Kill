@@ -144,6 +144,7 @@ QJsonObject LauncherConfig::toJson() const
         {"animationLevel", animationLevel},
         {"storageMode", storageMode},
         {"customStorageDir", customStorageDir},
+        {"forceEnableMultiplayerOnWin7", forceEnableMultiplayerOnWin7},
         {"managedMods", toArray(managedMods)},
         {"managedResourcePacks", toArray(managedResourcePacks)},
         {"managedModpacks", toArray(managedModpacks)},
@@ -188,6 +189,7 @@ LauncherConfig LauncherConfig::fromJson(const QJsonObject &object)
     config.animationLevel = object.value("animationLevel").toInt(config.animationLevel);
     config.storageMode = object.value("storageMode").toString(config.storageMode);
     config.customStorageDir = object.value("customStorageDir").toString(config.customStorageDir);
+    config.forceEnableMultiplayerOnWin7 = object.value("forceEnableMultiplayerOnWin7").toBool(config.forceEnableMultiplayerOnWin7);
     config.selectedAccountIndex = object.value("selectedAccountIndex").toInt(-1);
 
     auto fromArray = [](const QJsonValue &value) {

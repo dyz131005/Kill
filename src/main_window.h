@@ -34,6 +34,7 @@ class QVBoxLayout;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QCloseEvent;
+class QShowEvent;
 
 class MainWindow : public QMainWindow
 {
@@ -44,6 +45,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     void buildUi();
@@ -61,6 +63,9 @@ private:
     QWidget *buildSettingsTab();
     QWidget *buildLogsTab();
     QWidget *buildPluginsTab();
+    QWidget *buildMultiplayerTab();
+    void applyWin7MultiplayerGuard();
+    static bool isWindows7OrBelow();
     void refreshPluginsTab();
     void installPluginDll(const QString &sourcePath);
     void applyPluginUi();
@@ -149,6 +154,10 @@ private:
     QWidget *m_mainTabsPage = nullptr;
     int m_lastMainTabIndex = 0;
     bool m_closing = false;
+    bool m_acrylicApplied = false;
+    QWidget *m_multiplayerTab = nullptr;
+    int m_multiplayerTabIndex = -1;
+    bool m_multiplayerDisabled = false;
     QWidget *m_aboutPage = nullptr;
     QPushButton *m_aboutBackButton = nullptr;
     QPushButton *m_aboutEntryButton = nullptr;
@@ -197,6 +206,7 @@ private:
     QCheckBox *m_verifyFilesCheck = nullptr;
     QCheckBox *m_versionIsolationCheck = nullptr;
     QCheckBox *m_softwareOpenGLCheck = nullptr;
+    QCheckBox *m_forceMpOnWin7Check = nullptr;
     QComboBox *m_animationCombo = nullptr;
     QComboBox *m_storageModeCombo = nullptr;
     QLineEdit *m_storagePathEdit = nullptr;

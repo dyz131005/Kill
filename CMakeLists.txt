@@ -53,6 +53,8 @@ set(KILL_SOURCES
     src/download_task_engine.cpp
     src/widget_effects.h
     src/widget_effects.cpp
+    src/acrylic.h
+    src/acrylic.cpp
     src/crash_window.h
     src/crash_window.cpp
     src/zip_utils.h
@@ -63,6 +65,7 @@ set(KILL_SOURCES
     src/plugins/plugin_manager.h
     src/plugins/plugin_manager.cpp
     src/plugins_tab.cpp
+    src/multiplayer_tab.cpp
     src/plugin_ui_apply.cpp
     resources.qrc
 )
@@ -104,7 +107,7 @@ if(KILL_STATIC_QT)
 endif()
 
 if(WIN32)
-    target_link_libraries(Kill PRIVATE userenv shell32)
+    target_link_libraries(Kill PRIVATE userenv shell32 dwmapi)
 endif()
 
 # ===== 构建后处理 =====
