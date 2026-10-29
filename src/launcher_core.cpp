@@ -351,6 +351,7 @@ void LauncherCore::flushProcessLogBuffer(const QString &source,
         line.replace('\r', "");
         const QString text = QString::fromLocal8Bit(line).trimmed();
         if (!text.isEmpty()) {
+            m_lastGameLog += text + QStringLiteral("\n");
             log(QString("[%1] %2").arg(source, text));
         }
         newlineIndex = buffer.indexOf('\n');
@@ -361,6 +362,7 @@ void LauncherCore::flushProcessLogBuffer(const QString &source,
         remaining.replace('\r', "");
         const QString text = QString::fromLocal8Bit(remaining).trimmed();
         if (!text.isEmpty()) {
+            m_lastGameLog += text + QStringLiteral("\n");
             log(QString("[%1] %2").arg(source, text));
         }
         buffer.clear();
@@ -3814,6 +3816,7 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
 
     m_gameStdoutBuffer.clear();
     m_gameStderrBuffer.clear();
+    m_lastGameLog.clear();
 
     m_gameProcess = new QProcess(this);
     m_gameProcess->setWorkingDirectory(workingDirectory);
@@ -3905,6 +3908,7 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
                 flushProcessLogBuffer("Java STDOUT", m_gameStdoutBuffer, QByteArray(), true);
                 flushProcessLogBuffer("Java STDERR", m_gameStderrBuffer, QByteArray(), true);
 
+                const bool crashed = (exitStatus == QProcess::CrashExit) || (exitCode != 0);
                 if (exitStatus == QProcess::CrashExit) {
                     log(QString("Minecraft 已崩溃: 版本 %1, exitCode=%2").arg(versionId).arg(exitCode));
                 } else if (exitCode != 0) {
@@ -3912,7 +3916,7 @@ bool LauncherCore::startTrackedMinecraftProcess(const QString &javaPath,
                 } else {
                     log(QString("Minecraft 正常退出: 版本 %1").arg(versionId));
                 }
-                emit gameExited(exitCode);
+                emit gameExited(exitCode, crashed);
             });
 
     m_gameProcess->start(launchJava, arguments);

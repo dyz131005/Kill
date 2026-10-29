@@ -5,8 +5,8 @@ IDI_ICON1 ICON "../icon.ico"
 
 // 版本信息
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,8,0,0
- PRODUCTVERSION 1,8,0,0
+ FILEVERSION 2,0,0,0
+ PRODUCTVERSION 2,0,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG
@@ -23,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "KillLauncher"
             VALUE "FileDescription",  "Kill Minecraft Launcher"
-            VALUE "FileVersion",      "1.8.0.0"
+            VALUE "FileVersion",      "2.0.0.0"
             VALUE "InternalName",     "Kill"
             VALUE "LegalCopyright",   "Copyright (C) 2026 dyz131005"
             VALUE "OriginalFilename", "Kill.exe"
             VALUE "ProductName",      "Kill"
-            VALUE "ProductVersion",   "1.8.0.0"
+            VALUE "ProductVersion",   "2.0.0.0"
         END
     END
     BLOCK "VarFileInfo"

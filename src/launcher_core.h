@@ -64,6 +64,7 @@ public:
     QJsonArray fetchVersionManifest(QString *error);
     QJsonArray filterVersionsByType(const QJsonArray &versions, const QString &type) const;
     QStringList listInstalledVersions() const;
+    QString lastGameLog() const { return m_lastGameLog; }
     LauncherVersionProfile effectiveVersionProfile(const QString &versionId) const;
     bool saveVersionProfile(const QString &versionId, const LauncherVersionProfile &profile, QString *error = nullptr);
     QString versionBaseGameVersion(const QString &versionId) const;
@@ -144,7 +145,7 @@ public:
 signals:
     void logMessage(const QString &message);
     void progressStarted(const QString &message);
-    void gameExited(int exitCode);
+    void gameExited(int exitCode, bool crashed);
     void progressUpdated(int value, int maximum, const QString &message);
     void progressFinished(const QString &message);
 
@@ -322,4 +323,5 @@ private:
     QProcess *m_gameProcess = nullptr;
     mutable QByteArray m_gameStdoutBuffer;
     mutable QByteArray m_gameStderrBuffer;
+    mutable QString m_lastGameLog;   // full captured game output for crash analysis
 };

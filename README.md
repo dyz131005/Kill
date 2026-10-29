@@ -41,8 +41,11 @@
 >
 > **一个健康的社区，不应该让破坏者赢。** 这句话写在这里，不是情绪，是记号。留给将来某一天，也留给此刻正在读它的你。
 
+---
 
-一个基于 **Qt Widgets + QSS + CMake + C++20** 的 Minecraft Java 版启动器项目，面向 Windows（MinGW / MSVC）环境，默认优先使用 **bangbang93 / BMCLAPI** 镜像源加速资源下载。支持 Fabric / Forge 模组加载器、Modrinth & CurseForge 模组搜索下载、版本隔离、实例目录管理和 Win32 级别的详细日志诊断。
+一个基于 **Qt Widgets + QSS + CMake + C++20** 的 Minecraft Java 版启动器项目，面向 Windows（MSVC）环境，默认优先使用 **bangbang93 / BMCLAPI** 镜像源加速资源下载。支持 Fabric / Forge / NeoForge / Quilt 等模组加载器、Modrinth & CurseForge 模组/整合包/资源包搜索下载、版本隔离、原生 DLL 插件系统、HMCL 风格的并发下载与崩溃诊断，以及 Win32 级别的详细日志诊断。
+
+> 界面与交互大量参考 [HMCL](https://github.com/HMCL-dev/HMCL) 的布局与行为（版本下载页、安装页、版本管理页、下载任务列表、崩溃窗口等）。
 
 ---
 
@@ -50,44 +53,64 @@
 
 ### 🏠 启动与账户
 - **离线账户登录**：快速配置自定义玩家名。
-- **Microsoft 正版账户 OAuth 导入**：支持 Azure AD 桌面客户端授权流程。
-- **Java 自动探测 / 自动安装 / 自定义路径**：支持多版本 JDK 共存，可一键下载符合 Minecraft 版本要求的 JRE。
+- **Microsoft 正版登录**：使用 OAuth 2.0 设备码（Device Code）流程登录正版账户，无需手动复制回调链接。
+- **Java 自动探测 / 自动安装 / 自定义路径**：自动探测系统 Java，缺失时一键下载对应版本的 JRE。
 - **启动参数与内存设置**：Xmx / Xms、JVM 参数、游戏参数独立配置。
-- **原版 Minecraft 版本清单获取与下载**：支持正式版、快照版，并按精确 MC 版本分组。
+- **启动页选中版本头卡**：显示当前选中版本的图标、版本名与加载器类型。
 - **镜像源切换**：Mojang 官方 / bangbang93（BMCLAPI）一键切换，支持文件完整性校验开关。
 
 ### 🔧 模组加载器 & 依赖库
-- **Fabric / Forge 支持**：使用各自官方安装器（`fabric-installer.jar` / `forge-installer.jar`）安装到指定 Minecraft 版本。
-- **Maven 坐标解析**：`mavenCoordsToPath()` / `mavenBuildDownloadUrl()` 统一处理 Fabric/Forge 依赖库的 Maven 路径推导与下载地址拼接。
-- **依赖库完整下载**：`installLibraries()` 同时支持 `downloads.artifact.url` 直链和 Maven 仓库推导地址，保证 `KnotClient` 等启动类不丢失。
+- **多加载器支持**：Fabric / Forge / NeoForge / Quilt / LegacyFabric / OptiFine / Cleanroom / LiteLoader（按游戏版本提供可选项）。
+- **Maven 坐标解析**：`mavenCoordsToPath()` / `mavenBuildDownloadUrl()` 统一处理依赖库的 Maven 路径推导与下载地址拼接。
+- **依赖库完整下载**：同时支持 `downloads.artifact.url` 直链与 Maven 仓库推导地址，保证 `KnotClient` 等启动类不丢失。
 - **类路径 / 模块路径构建**：`buildClasspath()` / `buildModulePath()` 优先使用 `downloads.artifact.path`，缺失时自动通过 Maven 坐标推导本地库路径。
 - **版本继承解析**：递归合并继承链（`inheritsFrom`）中的 libraries、arguments、assetsIndex、mainClass 等元数据。
 
-### 📦 模组 / 资源包 / 整合包
+### 📦 模组 / 资源包 / 整合包 / 数据包
 - **Modrinth 搜索与下载**：内置搜索、分页、版本详情、多文件下载队列。
-- **CurseForge 搜索与下载**：可配置 CF API Key 后启用，未填 Key 时自动隐藏。
-- **模组版本按精确 MC 版本分组**：参考 HMCL 实现 `ModVersionEntry`，区分「模组自身版本号 / 支持的 MC 版本 / 版本类型 / 加载器类型」，同一版本同时归入多个支持的 MC 版本分组。
-- **目标目录统一管理**：模组 / 资源包 / 整合包均可选择安装到「当前实例（版本隔离）」或「全局游戏目录」。
-- **模组下载路径与加载路径一致**：统一通过 `LauncherCore::versionModsDirectory()` 计算最终目录，避免出现「下载到 `versions/X/mods` 但 Fabric 读的是 `instances/X/mods`」导致模组加载不到的问题。
+- **CurseForge 搜索与下载**：可配置 CurseForge API Key 后启用，未填 Key 时自动隐藏入口。
+- **模组版本按精确 MC 版本分组**：参考 HMCL 实现，区分「模组自身版本号 / 支持的 MC 版本 / 版本类型 / 加载器类型」。
+- **目标目录统一管理**：资源可安装到「当前实例（版本隔离）」或「全局游戏目录」。
+- **模组下载路径与加载路径一致**：统一通过 `LauncherCore::versionModsDirectory()` 计算最终目录，避免模组下载后加载不到的问题。
 
 ### 🗂️ 实例 & 版本隔离
-- **版本隔离**开关：开启后每个版本拥有独立 `.minecraft`（位于 `instances/<versionId>/`），关则共用全局游戏目录。
-- **实例工作目录**：`LauncherCore::instancesRoot()` 集中管理实例根；`effectiveVersionProfile()` 统一返回实际生效的配置档。
-- **版本管理页（对标 HMCL GameListPage）**：「版本」子页为实例卡片列表，顶部工具栏提供刷新 / 安装新游戏 / 打开目录 / 删除与搜索框；每张实例卡片显示类型图标、实例名与状态（当前选中 / 已安装），右侧箭头按钮，底部 1px 分隔线，选中态浅蓝背景。列表支持关键字过滤，并与版本下拉双向同步。
+- **版本隔离开关**：开启后每个版本拥有独立工作目录（`instances/<versionId>/`），关闭则共用全局游戏目录。
+- **版本管理页（对标 HMCL GameListPage）**：「版本」子页为实例卡片列表，顶部工具栏提供刷新 / 安装新游戏 / 打开目录 / 删除与搜索框；每张卡片显示类型图标、实例名与状态，选中态高亮，并与版本下拉双向同步。
 
-### 📋 日志 & 诊断
-- **多候选目录日志写入**：优先顺序为 `%AppData%\KillLauncher\Kill\logs` → 程序目录 → 文档目录 → 临时目录，保证任何情况下都能写下日志。
-- **Win32 API 级别报错**：路径逐段诊断（`mw_diagnosePathHierarchy`）、`CreateFileW` 真实错误码（`mw_win32ErrorMessage`）、路径字节十六进制转储（`mw_diagnoseHexDump`）、目录写入多参数矩阵探测，定位「系统找不到指定的文件」「拒绝访问」等因安全中心 ASR / Minifilter（如 `gameflt.sys`）拦截导致的写入失败。
-- **日志写入防重入**：自定义 Guard 结构体防止日志写入失败再打日志造成的死循环。
+### 🧩 原生 DLL 插件系统
+- **插件目录**：扫描配置目录下的 `plugins/`，加载 `.dll` 插件。
+- **分级权限**：安全 / 需确认 / 禁止三级，危险权限首次使用时弹窗授权。
+- **UI 注入能力**：注入全局样式、控件、按钮、设置项、覆盖页面。
+- **事件钩子**：`app.startup` / `game.before_launch` / `game.after_exit`。
+- **一键安装插件**：插件页支持点击「安装插件」选择 DLL，或直接把 DLL **拖进列表**安装；复制进 `plugins/` 目录，若存在同名文件会询问是否覆盖。
+- **插件管理页**：列出插件、显示权限、授权 / 取消授权、打开插件目录。
+- **开源合规**：LGPLv3 / GPLv3 协议、第三方声明、RELINKING 重链接说明。
 
 ### 🌐 下载系统
-- **HMCL 风格版本下载页**：顶部工具卡片（搜索框 + 类型筛选 + 刷新按钮同处一行），下方整宽版本列表，每项显示类型图标、版本号与发布时间两行信息；类型筛选对齐 HMCL（正式版 / 快照版 / 愚人节版 / 远古版 / 所有版本），默认选中正式版。
-- **内嵌安装流程（对标 HMCL InstallersPage）**：点击版本项直接切换到安装页（主窗口内，非独立弹窗），左上角返回按钮；页面自上而下为实例名称卡片（含清空 / 恢复默认名称）、游戏版本信息条、加载器卡片网格、底部右对齐安装按钮。
-- **加载器卡片网格**：按 HMCL 规格实现（180×126 尺寸、4px 圆角、16px 间距、32px 图标居中），状态显示未安装 / 已选版本号；卡片按游戏版本裁剪——1.12.2 提供 Forge / Cleanroom / LiteLoader / LegacyFabric / OptiFine，≤1.13.2 提供 Forge / LiteLoader / OptiFine / LegacyFabric，更高版本提供 Forge / NeoForge / Fabric / Quilt / OptiFine。
-- **加载中 / 加载失败状态页**：版本列表加载时显示提示，失败可点击重试。
-- **版本图标随程序打包**：图标资源经 Qt RCC 嵌入 `Kill.exe`，无需额外文件。
-- **多任务并发下载队列**：`DownloadManager` + `DownloadProgressDialog` 统一管理进度、重试、取消。
-- **临时文件创建 & 目录创建**：加强了错误处理，输出 Win32 错误描述；使用 `QDir().mkpath()` + 原生 `CreateDirectoryW` 逐层构建目录，每级失败打印具体错误码。
+- **HMCL 风格版本下载页**：顶部工具卡片（搜索框 + 类型筛选 + 刷新按钮），下方整宽版本列表，类型筛选对齐 HMCL（正式版 / 快照版 / 愚人节版 / 远古版 / 所有版本）。
+- **内嵌安装流程**：点击版本项直接切换到安装页（主窗口内），含实例名称卡片、版本信息条、加载器卡片网格、底部安装按钮。
+- **窗口内遮罩式下载面板（HMCL 风格）**：下载时在主窗口内弹出半透明遮罩 + 居中面板，仅「取消」可点击；顶部总进度条 + 已完成计数，逐文件细进度条，**下载完成即消失**。
+- **并发多线程下载引擎**：默认 8 并发，`.part` 临时文件 + SHA-1 校验后原子重命名，支持取消。
+- **版本图标随程序打包**：图标资源经 Qt RCC 嵌入 `Kill.exe`。
+- **加载中 / 加载失败状态页**：失败可点击重试。
+- **安装即补全资源**：安装版本时先预取资源索引，再下载全部 assets 对象，避免「只能启动时补全」。
+
+### 🩺 崩溃诊断
+- **自动识别游戏异常退出**：游戏以崩溃 / 非 0 码退出时自动触发崩溃窗口（类似 HMCL `GameCrashWindow`）。
+- **主窗口隐藏 + 崩溃窗口弹出**：崩溃窗口为独立模态窗口，打开时隐藏主窗口；点击「返回启动器」关闭后自动恢复主窗口。
+- **正则原因分析**：移植 HMCL 崩溃分析规则子集，识别 Java 版本不匹配、内存不足、显卡/OpenGL 驱动、模组/Mixin 冲突等常见原因。
+- **一键操作**：复制日志 / 打开日志文件夹 / 导出崩溃报告（含时间、分析结论、完整日志）/ 返回启动器。
+
+### 📋 日志 & 诊断
+- **多候选目录日志写入**：保证任何情况下都能写下日志。
+- **Win32 API 级别报错**：路径逐段诊断、`CreateFileW` 真实错误码、目录写入探测，定位安全中心 ASR / Minifilter 拦截导致的写入失败。
+- **游戏日志捕获**：完整捕获游戏 stdout/stderr，供崩溃分析与导出。
+
+### 🎨 界面与动画
+- **明暗主题**：顶栏一键切换深色 / 浅色主题。
+- **界面动画三档**：完全开启 / 部分（仅淡入淡出）/ 完全关闭。
+- **平滑过渡**：标签页切换滑动、页面淡入淡出、按钮点击回弹、关闭时窗口上滑退出。
+- **存储位置可配置**：配置 / 插件 / Java 可放在「安装目录下的 `.kill`（默认）/ AppData / 自定义目录」；支持识别旧路径与一键迁移。
 
 ---
 
@@ -98,108 +121,100 @@
 | UI | Qt 6 Widgets + QSS（`assets/style.qss`） |
 | 网络 | Qt6::Network（HTTP / HTTPS） |
 | 构建 | CMake 3.21+ / C++20 |
-| 编译器 | MinGW g++ 或 MSVC（需启用 `/utf-8`） |
+| 编译器 | MSVC（需启用 `/utf-8`） |
 | 资源打包 | Qt RCC（`resources.qrc`） |
+| TLS | 静态 OpenSSL（兼容 Win7 RTM） |
 
 ---
 
 ## 📁 项目结构
 
-```text
-Kill/
-├─ assets/
-│  └─ style.qss                 # 全局 QSS 样式（深色主题 / 卡片 / 按钮等）
-├─ src/
-│  ├─ main.cpp                  # 入口：应用实例、日志初始化、主窗口
-│  ├─ launcher_types.h          # 基础类型定义：VersionManifest、Library、ModVersionEntry 等
-│  ├─ config_store.h / .cpp     # 配置持久化（账号、Java、镜像源、内存、版本隔离等）
-│  ├─ launcher_core.h / .cpp    # 核心：版本解析、Maven 坐标、依赖下载、类路径、启动参数、工作目录
-│  ├─ main_window.h / .cpp      # 主窗口：版本列表、账号、设置、模组搜索、下载调度、版本分组 UI
-│  ├─ download_manager.h / .cpp # 下载器：分块队列、临时文件、校验、并发控制
-│  └─ download_progress_dialog.h / .cpp   # 下载进度弹窗
-├─ dist/
-│  └─ Kill/                     # windeployqt 自动部署产物（Kill.exe + Qt DLL + 插件）
-│     └─ logs/                  # 运行期日志
-├─ hmcl-reference/HMCL/         # HMCL 源码参考（用于版本分组 / 模组解析对齐 HMCL 行为）
-├─ build/                       # CMake 构建目录
-├─ CMakeLists.txt
-├─ resources.qrc                # Qt 资源：图标、QSS 等
-├─ icon.ico
-├─ fabric-installer.jar         # Fabric 官方安装器
-├─ forge-installer.jar          # Forge 官方安装器
-├─ count_simple.ps1             # 代码行数统计脚本
-```
+    Kill/
+      src/
+        main.cpp                   # 入口：应用实例、TLS 证书初始化、主窗口
+        launcher_types.h           # 基础类型：LauncherConfig、版本 profile、账户等
+        config_store.h / .cpp      # 配置持久化 + 存储目录定位（install/appdata/custom）
+        launcher_core.h / .cpp     # 核心：版本解析/安装、依赖下载、类路径、启动、崩溃检测
+        main_window.h / .cpp       # 主窗口：各标签页、下载/版本管理/设置 UI、动画
+        download_manager.h / .cpp  # 单文件下载器
+        download_progress_dialog.* # 进度对话框（独立 / 窗口内嵌遮罩）
+        download_task_engine.*     # 并发多线程下载引擎
+        download_overlay.*         # HMCL 风格窗口内下载遮罩面板
+        crash_window.*             # 游戏崩溃窗口（异常退出时弹出）
+        widget_effects.*           # 平滑过渡动画工具
+        plugins_tab.cpp            # 插件管理页（含 DLL 安装 / 拖拽）
+        plugin_ui_apply.cpp        # 插件 UI 注入应用
+        zip_utils.*                # 内置 ZIP 解压（Win7 兼容）
+        plugins/
+          plugin_api.h             # 插件 ABI / 权限定义
+          plugin_guard.*           # 插件安全防护
+          plugin_manager.*         # 插件扫描 / 加载 / 授权
+      assets/
+        style.qss                  # 全局 QSS 样式
+        cacert.pem                 # 内置 CA 证书（Win7 HTTPS 兼容）
+        version-icons/             # 版本类型图标
+      scripts/
+        patch_win7_import.py       # 编译后修补 Win7 不兼容导入
+      resources/
+        app.rc                     # Windows 资源（图标 / 版本信息）
+      CMakeLists.txt
+      build_static.bat             # 静态单文件构建脚本
+      resources.qrc                # Qt 资源：图标、QSS、更新日志等
+      icon.ico
+      updatelog.txt                # 更新日志（内嵌进 exe）
+      LICENSE / LICENSE.LGPLv3 / LICENSE.GPLv3
+      RELINKING.md                 # 静态链接 Qt 的重链接说明
+      THIRD_PARTY_NOTICES.md
+
+> 运行期配置、插件、Java 默认存放在 `<安装目录>/.kill/`，可在设置里切换到 AppData 或自定义目录。
 
 ---
 
 ## 🔨 构建方式
 
-本项目不使用 `.pro`，直接使用 CMake + Qt6 + C++20，默认构建静态 Qt 单文件。
+默认使用 **静态 Qt 单文件构建**，产物为不依赖外部 Qt DLL 的单个 `Kill.exe`。
 
-### 1. 环境要求
+### 环境要求
 
-- Qt：静态构建的 Qt 6.8（本仓库使用 `D:\program\qt-static\6.8.4\msvc2022_64`），模块至少包含 `Core`、`Gui`、`Widgets`、`Network`、`Svg`
-- 编译器：MSVC（VS 2022 / 2026，默认 `/utf-8` 已在 CMake 中打开）
-- CMake：3.21 及以上
-- Ninja：推荐作为生成器
-- Python 3：用于编译后自动修补 Win7 兼容的导入表
+- Qt：静态构建的 Qt 6.8（需带静态 OpenSSL TLS 后端）
+- 编译器：MSVC（VS 2022+，CMake 已开启 `/utf-8`）
+- CMake 3.21+、Ninja
+- Python 3（用于编译后自动修补 Win7 兼容导入表）
 
-### 2. 构建示例
+### 一键构建
 
-```powershell
-cmake -S . -B build_static -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="D:/program/qt-static/6.8.4/msvc2022_64" `
-  -DKILL_STATIC_QT=ON
-cmake --build build_static --parallel
-```
+修改 `build_static.bat` 中的 `QT_STATIC_DIR` / `OPENSSL_ROOT_DIR` 为你本机的静态 Qt 路径后运行：
 
-构建产物直接输出到 `dist/`：
+    build_static.bat
 
-```text
-dist/
-├─ Kill.exe      # 静态链接单文件，无 Qt DLL 依赖
-└─ icon.ico
-```
+脚本会：配置 CMake（`KILL_STATIC_QT=ON`）→ 编译 → 调用 `scripts/patch_win7_import.py` 修补 Win7 导入 → 输出 `dist/Kill.exe`。
 
-### 3. 直接运行
+也可手动构建：
 
-```powershell
-.\dist\Kill.exe
-```
+    cmake -S . -B build_ssl -G Ninja -DCMAKE_BUILD_TYPE=Release -DKILL_STATIC_QT=ON -DCMAKE_PREFIX_PATH="<静态Qt路径>" -DOPENSSL_ROOT_DIR="<静态OpenSSL路径>"
+    cmake --build build_ssl --parallel
 
-### 4. 动态构建（仅开发调试）
+产物：
 
-若需用动态 Qt 快速调试，关闭静态开关即可，此时会调用 `windeployqt` 部署 Qt 运行库：
+    dist/
+      Kill.exe      # 静态链接单文件
+      icon.ico
 
-```powershell
-cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH="D:/Qt/6.8.0/mingw_64" -DKILL_STATIC_QT=OFF
-cmake --build build -j8
-```
+### 关于 Win7 兼容
 
-### 5. 关于静态 Qt 的 Win7 兼容
-
-MSVC 14.4x 的静态 UCRT 硬链接了 Windows 8 才引入的 `GetSystemTimePreciseAsFileTime`，在 Win7 上启动会报「无法定位输入点」。构建流程会在链接完成后自动调用 `scripts/patch_win7_import.py`，把导入名改写为 Win7 可用的 `GetSystemTimeAsFileTime`，无需手动处理。
+MSVC 14.4x 的静态 CRT 硬链接了 Windows 8 才引入的 `GetSystemTimePreciseAsFileTime`，在 Win7 上启动会报「无法定位输入点」。构建流程会在链接后自动运行 `scripts/patch_win7_import.py` 把导入改写为 Win7 可用的 `GetSystemTimeAsFileTime`。
 
 ---
 
-## 🔐 正版登录（Microsoft OAuth）
+## 🔐 正版登录（Microsoft）
 
-需要自己提供 Microsoft OAuth **Client ID**（Azure AD 桌面应用）。流程：
-
-1. 在 Azure Portal 创建「桌面和移动设备」应用，重定向 URI 填 `https://login.live.com/oauth20_desktop.srf`
-2. 在启动器「账户」设置填入 **Client ID**
-3. 点击「打开授权页」，浏览器中完成登录
-4. 复制最终以 `login.live.com/oauth20_desktop.srf?...` 开头的完整回调 URL
-5. 粘贴回启动器，自动解析 `code` 并换得 access_token / uuid / playerName
+使用 **OAuth 2.0 设备码（Device Code）** 流程：点击「设备码登录」→ 弹窗显示验证码与验证地址 → 在浏览器完成登录 → 启动器自动轮询完成登录。无需手动复制回调链接。
 
 ---
 
 ## 🦑 CurseForge API Key
 
-CurseForge 官方接口对第三方启动器要求 CF Core API Key，未填写时：
-- CurseForge 搜索/下载入口自动隐藏
-- 仍可正常使用 Modrinth
+CurseForge 官方接口对第三方启动器要求 Core API Key，未填写时 CurseForge 搜索/下载入口自动隐藏，仍可正常使用 Modrinth。
 
 ---
 
@@ -207,11 +222,11 @@ CurseForge 官方接口对第三方启动器要求 CF Core API Key，未填写�
 
 | 现象 | 可能原因 | 排查方法 |
 |------|----------|----------|
-| 启动后 Fabric 报错 `ClassNotFoundException: KnotClient` | Fabric 依赖库（如 ASM、Mixin）未下载或未进入 classpath | 看 `dist\Kill\logs\` 里 `installLibraries` 段日志；检查 `libraries\org\ow2\asm\...` 等目录是否有 jar |
-| 模组安装了但游戏里加载不到 | 以前 Kill 下载到 `versions/X/mods`，但 Fabric 读的是 `instances/X/mods` | 用最新版 Kill 重新下载（已统一走 `versionModsDirectory()`），或手动把 jar 搬到 `instances/<versionId>/mods/` |
-| 日志里提示「无法创建目录 / 拒绝访问」但资源管理器能写 | Windows 安全中心 ASR 规则或 `gameflt.sys` 等 Minifilter 拦截特定进程路径 | 看日志输出的「路径逐段诊断 + Win32 错误码」；建议把实例 / 游戏目录迁到 D 盘 |
+| 启动后 Fabric 报错 `ClassNotFoundException: KnotClient` | Fabric 依赖库未下载或未进入 classpath | 看日志里 `installLibraries` 段；检查 `libraries/org/ow2/asm/...` 是否有 jar |
+| 模组装了但游戏里加载不到 | 下载目录与加载目录不一致 | 用最新版重新下载（已统一 `versionModsDirectory()`），或手动把 jar 搬到实例 `mods/` |
+| 日志提示「无法创建目录 / 拒绝访问」 | 安全中心 ASR / Minifilter 拦截 | 看日志的「路径逐段诊断 + Win32 错误码」；建议迁到 D 盘 |
+| 游戏崩溃弹窗 | 游戏异常退出 | 崩溃窗口内查看原因、导出报告 |
 | CurseForge 页面一直空 | 没填 CF Core API Key | 设置里填 Key 后重启 |
-
 
 ---
 
@@ -224,10 +239,10 @@ CurseForge 官方接口对第三方启动器要求 CF Core API Key，未填写�
 
 ### 关于静态链接 Qt（LGPLv3 合规）
 
-本项目以静态链接方式使用 Qt 6.8.4（LGPLv3）。为满足 LGPLv3 义务：
+本项目以静态链接方式使用 Qt 6.8（LGPLv3）。为满足 LGPLv3 义务：
 
 - 所用 Qt 的完整源码随仓库提供（`qt-static-src/`），含本项目为兼容 Win7 所做的修改；
 - 用户可修改 Qt 源码并用 `build_static.bat` 重新链接出可运行的 exe，详见 RELINKING.md；
 - 第三方组件与对 Qt 的修改说明见 THIRD_PARTY_NOTICES.md。
 
-> 说明：使用 Qt 的 LGPLv3 模块（Core / Gui / Widgets / Network / Svg）不会让本项目整体变为 GPL；应用层仍可用 MIT，只要满足上述「提供源码 + 可重新链接」义务即可。请勿引入 Qt 的 GPL-only 模块，否则整个项目需转为 GPL。
+> 说明：使用 Qt 的 LGPLv3 模块（Core / Gui / Widgets / Network / Svg）不会让本项目整体变为 GPL；应用层仍可用 MIT，只需满足「提供源码 + 可重新链接」义务即可。请勿引入 Qt 的 GPL-only 模块。

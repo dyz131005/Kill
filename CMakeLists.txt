@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Kill VERSION 1.9.0 LANGUAGES CXX RC)
+project(Kill VERSION 2.0.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,6 +53,8 @@ set(KILL_SOURCES
     src/download_task_engine.cpp
     src/widget_effects.h
     src/widget_effects.cpp
+    src/crash_window.h
+    src/crash_window.cpp
     src/zip_utils.h
     src/zip_utils.cpp
     src/plugins/plugin_api.h

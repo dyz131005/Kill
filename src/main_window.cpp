@@ -38,6 +38,7 @@
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
 #include "widget_effects.h"
+#include "crash_window.h"
 #include <QCloseEvent>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -438,7 +439,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 初始化插件系统：扫描 exe 同目录 plugins/ 下的 DLL，加载已授权插件
     {
-        const QString pluginsDir = QCoreApplication::applicationDirPath() + "/plugins";
+        const QString pluginsDir = m_core.configStore()->configDir() + "/plugins";
         m_pluginManager = new PluginManager(this);
         m_pluginManager->setNetworkManager(m_networkManager);
         m_pluginManager->setGameDirectory(m_core.configStore()->config().minecraftDir);
@@ -471,8 +472,15 @@ MainWindow::MainWindow(QWidget *parent)
         m_pluginManager->fireHook("app.startup", QJsonObject{});
     }
 
-    connect(&m_core, &LauncherCore::gameExited, this, [this](int code) {
+    connect(&m_core, &LauncherCore::gameExited, this, [this](int code, bool crashed) {
         if (m_pluginManager) m_pluginManager->fireHook("game.after_exit", QJsonObject{{ "exitCode", code }});
+        if (crashed) {
+            // Show the HMCL-style crash window; it hides the main window while open.
+            auto *crash = new CrashWindow(m_core.lastGameLog(), this);
+            crash->open();
+            crash->raise();
+            crash->activateWindow();
+        }
     });
     connect(&m_core, &LauncherCore::logMessage, this, &MainWindow::appendLog);
     appendLog(QString("日志文件: %1").arg(QDir::toNativeSeparators(m_logFilePath)));
@@ -1067,11 +1075,22 @@ void MainWindow::fadeInWidget(QWidget *widget, int durationMs)
 void MainWindow::animateStackSwitch(QStackedWidget *stack, int index)
 {
     if (!stack) return;
-    if (index < 0 || index >= stack->count() || index == stack->currentIndex()) return;
+    const int prev = stack->currentIndex();
+    if (index < 0 || index >= stack->count() || index == prev) return;
     stack->setCurrentIndex(index);
     const int level = m_core.configStore()->config().animationLevel;
     if (level <= 0) return;
-    fadeInWidget(stack->widget(index), level == 1 ? 140 : 200);
+    QWidget *page = stack->widget(index);
+    if (!page) return;
+    if (level == 1) {
+        fadeInWidget(page, 150);
+        return;
+    }
+    // Vertical nav (side buttons stacked top-to-bottom): slide vertically.
+    // Moving to a lower index -> new page slides in from above; to a higher
+    // index -> slides in from below.
+    const bool movedDown = (index > prev);
+    WidgetAnim::slideInVertical(page, /*fromBottom=*/movedDown, 220);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -1086,19 +1105,20 @@ void MainWindow::closeEvent(QCloseEvent *event)
     event->ignore();
     m_closing = true;
 
-    QWidget *content = centralWidget();
-    if (!content) {
-        m_closing = false;
-        event->accept();
-        return;
-    }
-
-    // Slide the whole window content upward and fade out, then close.
-    WidgetAnim::slideUpOut(content, level == 1 ? 180 : 260, [this]() {
+    // Slide the ENTIRE window up off the screen, then close.
+    const QPoint startPos = pos();
+    const QPoint endPos(startPos.x(), startPos.y() - height() - 40);
+    auto *anim = new QPropertyAnimation(this, "pos", this);
+    anim->setDuration(level == 1 ? 200 : 300);
+    anim->setStartValue(startPos);
+    anim->setEndValue(endPos);
+    anim->setEasingCurve(QEasingCurve::InCubic);
+    connect(anim, &QPropertyAnimation::finished, this, [this]() {
         // Keep m_closing = true so the subsequent close() is accepted immediately
         // without replaying the animation (avoids an infinite close loop).
         close();
     });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void MainWindow::animateExpand(QWidget *widget, bool expand, int durationMs)
@@ -2913,7 +2933,111 @@ QWidget *MainWindow::buildSettingsTab()
     baseLayout->addRow("", saveButton);
 
     layout->addWidget(baseBox);
+
+    auto *storageBox = new QGroupBox("存储位置（配置 / 插件 / Java）", page);
+    auto *storageLayout = new QVBoxLayout(storageBox);
+
+    m_storageModeCombo = new QComboBox(storageBox);
+    m_storageModeCombo->addItem("安装目录下的 .kill（默认）", "install");
+    m_storageModeCombo->addItem("AppData（用户数据目录）", "appdata");
+    m_storageModeCombo->addItem("自定义目录", "custom");
+    storageLayout->addWidget(new QLabel("存储模式：", storageBox));
+    storageLayout->addWidget(m_storageModeCombo);
+
+    auto *storagePathRow = new QHBoxLayout();
+    m_storagePathEdit = new QLineEdit(storageBox);
+    m_storagePathEdit->setReadOnly(true);
+    auto *storageBrowseBtn = new QPushButton("浏览…", storageBox);
+    storagePathRow->addWidget(m_storagePathEdit, 1);
+    storagePathRow->addWidget(storageBrowseBtn);
+    storageLayout->addWidget(new QLabel("当前目录：", storageBox));
+    storageLayout->addLayout(storagePathRow);
+
+    auto *storageBtnRow = new QHBoxLayout();
+    auto *detectOldBtn = new QPushButton("识别旧路径", storageBox);
+    auto *migrateBtn = new QPushButton("一键迁移", storageBox);
+    auto *applyStorageBtn = new QPushButton("应用存储位置", storageBox);
+    storageBtnRow->addWidget(detectOldBtn);
+    storageBtnRow->addWidget(migrateBtn);
+    storageBtnRow->addWidget(applyStorageBtn);
+    storageBtnRow->addStretch();
+    storageLayout->addLayout(storageBtnRow);
+
+    auto *storageHint = new QLabel("提示：切换存储位置需重启启动器后完全生效；「一键迁移」会把旧目录里的配置、插件、Java 等复制到当前目录。", storageBox);
+    storageHint->setWordWrap(true);
+    storageHint->setStyleSheet("color: #6b7280;");
+    storageLayout->addWidget(storageHint);
+
+    layout->addWidget(storageBox);
     layout->addStretch();
+
+    connect(m_storageModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (!m_storageModeCombo || !m_storagePathEdit) return;
+        const QString mode = m_storageModeCombo->currentData().toString();
+        if (mode == "custom") {
+            const QString dir = QFileDialog::getExistingDirectory(this, "选择存储目录", m_storagePathEdit->text());
+            if (!dir.isEmpty()) {
+                m_storagePathEdit->setText(QDir::toNativeSeparators(dir));
+            } else {
+                m_storageModeCombo->setCurrentIndex(0);
+                return;
+            }
+        } else {
+            m_storagePathEdit->setText(QDir::toNativeSeparators(m_core.configStore()->resolveDirForMode(mode)));
+        }
+    });
+
+    connect(storageBrowseBtn, &QPushButton::clicked, this, [this] {
+        const QString dir = QFileDialog::getExistingDirectory(this, "选择存储目录", m_storagePathEdit->text());
+        if (!dir.isEmpty()) {
+            if (m_storageModeCombo) m_storageModeCombo->setCurrentIndex(2);
+            m_storagePathEdit->setText(QDir::toNativeSeparators(dir));
+        }
+    });
+
+    connect(detectOldBtn, &QPushButton::clicked, this, [this] {
+        const QString legacy = ConfigStore::legacyAppDataDir();
+        if (legacy.isEmpty()) {
+            showInfo(this, "未检测到旧版 AppData 路径（%APPDATA%/Kill）。");
+        } else {
+            m_detectedLegacyDir = legacy;
+            if (m_storageModeCombo) m_storageModeCombo->setCurrentIndex(1);
+            m_storagePathEdit->setText(QDir::toNativeSeparators(legacy));
+            showInfo(this, QString("检测到旧路径：\n%1\n\n点击「一键迁移」可复制到当前存储位置。").arg(QDir::toNativeSeparators(legacy)));
+        }
+    });
+
+    connect(migrateBtn, &QPushButton::clicked, this, [this] {
+        QString src = m_detectedLegacyDir;
+        if (src.isEmpty()) src = ConfigStore::legacyAppDataDir();
+        if (src.isEmpty()) {
+            showError(this, "没有可迁移的旧目录，请先「识别旧路径」。");
+            return;
+        }
+        QString err;
+        const int copied = m_core.configStore()->migrateFrom(src, &err);
+        if (copied < 0) {
+            showError(this, err.isEmpty() ? "迁移失败" : err);
+            return;
+        }
+        showInfo(this, QString("迁移完成，共复制 %1 个文件到：\n%2\n\n部分更改重启后生效。").arg(copied).arg(QDir::toNativeSeparators(m_core.configStore()->configDir())));
+    });
+
+    connect(applyStorageBtn, &QPushButton::clicked, this, [this] {
+        if (!m_storageModeCombo) return;
+        const QString mode = m_storageModeCombo->currentData().toString();
+        QString dir = m_storagePathEdit->text();
+        if (dir.isEmpty()) dir = m_core.configStore()->resolveDirForMode(mode);
+        QString err;
+        if (!m_core.configStore()->setConfigDir(dir, mode, &err)) {
+            showError(this, err.isEmpty() ? "应用失败" : err);
+            return;
+        }
+        m_core.configStore()->config().storageMode = mode;
+        m_core.configStore()->config().customStorageDir = (mode == "custom") ? dir : QString();
+        m_core.configStore()->save();
+        showInfo(this, QString("存储位置已切换到：\n%1\n\n请重启启动器以使插件 / Java 等完全生效。").arg(QDir::toNativeSeparators(dir)));
+    });
 
     connect(mcDirBrowse, &QPushButton::clicked, this, [this] {
         const QString dir = QFileDialog::getExistingDirectory(this, "选择 Minecraft 目录", m_minecraftDirEdit->text());
@@ -3056,7 +3180,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.9", infoBox);
+    auto *versionLabel = new QLabel("2.0", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -3201,6 +3325,14 @@ void MainWindow::loadConfigToUi()
     if (m_animationCombo) {
         const int idx = m_animationCombo->findData(config.animationLevel);
         if (idx >= 0) m_animationCombo->setCurrentIndex(idx);
+    }
+    if (m_storageModeCombo) {
+        const QString mode = m_core.configStore()->currentStorageMode();
+        const int idx = m_storageModeCombo->findData(mode);
+        if (idx >= 0) m_storageModeCombo->setCurrentIndex(idx);
+        if (m_storagePathEdit) {
+            m_storagePathEdit->setText(QDir::toNativeSeparators(m_core.configStore()->configDir()));
+        }
     }
 
     {

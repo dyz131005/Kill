@@ -32,6 +32,7 @@ public:
 
 protected:
     void draw(QPainter *painter) override;
+    QRectF boundingRectFor(const QRectF &sourceRect) const override;
 
 private:
     qreal m_offsetX = 0.0;
@@ -44,6 +45,10 @@ namespace WidgetAnim {
 // `fromRight` true  -> starts offset to the right, slides left into place.
 // `fromRight` false -> starts offset to the left,  slides right into place.
 void slideIn(QWidget *widget, bool fromRight, int durationMs = 220);
+
+// Vertical slide-in. `fromBottom` true -> starts below and slides up; false ->
+// starts above and slides down.
+void slideInVertical(QWidget *widget, bool fromBottom, int durationMs = 220);
 
 // Slide the widget upward off-screen with a fade, then invoke `onDone`.
 void slideUpOut(QWidget *widget, int durationMs = 260, const std::function<void()> &onDone = {});

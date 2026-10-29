@@ -68,6 +68,9 @@ struct LauncherConfig {
     bool softwareOpenGL = false;
     // Animation level: 0 = off, 1 = partial (fade only), 2 = full (all transitions)
     int animationLevel = 2;
+    // Storage location mode for config/java/plugins: "install" | "appdata" | "custom"
+    QString storageMode = "install";
+    QString customStorageDir;
     QStringList managedMods;
     QStringList managedResourcePacks;
     QStringList managedModpacks;

@@ -62,6 +62,7 @@ private:
     QWidget *buildLogsTab();
     QWidget *buildPluginsTab();
     void refreshPluginsTab();
+    void installPluginDll(const QString &sourcePath);
     void applyPluginUi();
     QWidget *buildAboutPage();
     QWidget *buildAnnouncementBar();
@@ -197,6 +198,9 @@ private:
     QCheckBox *m_versionIsolationCheck = nullptr;
     QCheckBox *m_softwareOpenGLCheck = nullptr;
     QComboBox *m_animationCombo = nullptr;
+    QComboBox *m_storageModeCombo = nullptr;
+    QLineEdit *m_storagePathEdit = nullptr;
+    QString m_detectedLegacyDir;
 
     QPlainTextEdit *m_logsEdit = nullptr;
     QString m_logFilePath;
