@@ -33,6 +33,7 @@ class QToolButton;
 class QVBoxLayout;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QCloseEvent;
 
 class MainWindow : public QMainWindow
 {
@@ -40,6 +41,9 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     void buildUi();
@@ -68,6 +72,8 @@ private:
     void toggleTheme();
     void animateButton(QPushButton *button);
     void animateExpand(QWidget *widget, bool expand, int durationMs = 200);
+    void fadeInWidget(QWidget *widget, int durationMs = 180);
+    void animateStackSwitch(QStackedWidget *stack, int index);
 
     static QString groupBoxStyle();
     static QString labelStyle();
@@ -78,6 +84,7 @@ private:
     void refreshInstalledVersionsUi();
     void refreshRemoteVersionsUi();
     void syncSelectedVersion(const QString &versionId, QComboBox *source = nullptr);
+    void updateLaunchHeader(const QString &versionId);
     QString currentManagedVersion() const;
     void updateVersionProfileEditorState();
     void loadVersionProfileToUi();
@@ -124,6 +131,9 @@ private:
     QComboBox *m_homeVersionCombo = nullptr;
     QComboBox *m_homeAccountCombo = nullptr;
     QComboBox *m_homeVersionTypeCombo = nullptr;
+    QLabel *m_homeHeaderIcon = nullptr;
+    QLabel *m_homeHeaderTitle = nullptr;
+    QLabel *m_homeHeaderSubtitle = nullptr;
 
     QStackedWidget *m_homeStackedWidget = nullptr;
     QButtonGroup *m_homeNavGroup = nullptr;
@@ -136,6 +146,8 @@ private:
     QTabWidget *m_mainTabWidget = nullptr;
     QStackedWidget *m_mainStackedWidget = nullptr;
     QWidget *m_mainTabsPage = nullptr;
+    int m_lastMainTabIndex = 0;
+    bool m_closing = false;
     QWidget *m_aboutPage = nullptr;
     QPushButton *m_aboutBackButton = nullptr;
     QPushButton *m_aboutEntryButton = nullptr;
@@ -184,6 +196,7 @@ private:
     QCheckBox *m_verifyFilesCheck = nullptr;
     QCheckBox *m_versionIsolationCheck = nullptr;
     QCheckBox *m_softwareOpenGLCheck = nullptr;
+    QComboBox *m_animationCombo = nullptr;
 
     QPlainTextEdit *m_logsEdit = nullptr;
     QString m_logFilePath;

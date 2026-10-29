@@ -6,8 +6,10 @@
 #include <windows.h>
 #endif
 
+#include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QHash>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
@@ -37,6 +39,8 @@
 
 #include "download_manager.h"
 #include "download_progress_dialog.h"
+#include "download_overlay.h"
+#include "download_task_engine.h"
 #include "zip_utils.h"
 
 namespace {
@@ -2441,119 +2445,36 @@ bool LauncherCore::installVanillaVersion(const QString &versionId, QString *erro
 bool LauncherCore::installVanillaVersionWithDialog(const QString &versionId, QString *error, QWidget *parentWidget)
 {
     log(QString("开始安装版本: %1").arg(versionId));
-    DownloadProgressDialog dialog(QString("下载版本 %1").arg(versionId),
-                                  QString("正在准备下载 Minecraft %1...").arg(versionId),
-                                  parentWidget);
-    dialog.showOverallProgress(true);
-    dialog.setOverallBusy(true);
-    dialog.setStepLabel("准备中...");
-    dialog.setBusy(true);
-    dialog.show();
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 
-    bool cancelled = false;
-    bool currentDownloadDone = false;
-    bool currentDownloadOk = false;
-    QString currentDownloadError;
+    // Find a host widget for the in-window overlay: prefer the top-level window.
+    QWidget *host = parentWidget ? parentWidget->window() : nullptr;
+    if (!host) {
+        host = QApplication::activeWindow();
+    }
 
-    QObject::connect(&dialog, &DownloadProgressDialog::cancelled, [&cancelled]() {
-        cancelled = true;
-    });
-
-    auto pumpEvents = [&]() -> bool {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-        if (cancelled || dialog.isCancelled()) {
-            if (error) *error = "操作已取消";
-            return false;
-        }
-        return true;
+    auto failWith = [&](const QString &msg) -> bool {
+        if (error) *error = msg;
+        log(QString("安装失败: %1").arg(msg));
+        return false;
     };
 
-    auto downloadWithDialog = [&](const QUrl &url, const QString &filePath, const QString &sha1,
-                                   const QString &logLabel,
-                                   const QList<QPair<QString, QString>> &headers = {}) -> bool {
-        if (QFileInfo::exists(filePath) && (!shouldVerify() || sha1.isEmpty() || verifySha1(filePath, sha1))) {
-            log(QString("跳过下载，文件已存在: %1").arg(QDir::toNativeSeparators(filePath)));
-            dialog.setProgress(100, 100);
-            return true;
-        }
-
-        currentDownloadDone = false;
-        currentDownloadOk = false;
-        currentDownloadError.clear();
-
-        DownloadManager *manager = new DownloadManager(m_networkManager, this);
-        QObject::connect(&dialog, &DownloadProgressDialog::cancelled, manager, &DownloadManager::cancel);
-        QObject::connect(manager, &DownloadManager::downloadProgress,
-                         [&dialog](qint64 received, qint64 total) {
-            if (total > 0) {
-                dialog.setProgress(static_cast<int>(received), static_cast<int>(total));
-                dialog.setStatus(QString("已下载: %1 / %2 MB")
-                    .arg(received / (1024 * 1024))
-                    .arg(total / (1024 * 1024)));
-            }
-        });
-        QObject::connect(manager, &DownloadManager::downloadFinished,
-                         [&](bool success, const QString &err) {
-            currentDownloadDone = true;
-            currentDownloadOk = success;
-            currentDownloadError = err;
-        });
-
-        log(QString("开始下载 %1: %2 <- %3")
-                .arg(logLabel,
-                     QDir::toNativeSeparators(filePath),
-                     rewriteUrl(url.toString())));
-        manager->downloadFileSilent(QUrl(rewriteUrl(url.toString())), filePath, shouldVerify() ? sha1 : QString(), headers);
-
-        while (!currentDownloadDone) {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            if (cancelled || dialog.isCancelled()) {
-                manager->deleteLater();
-                if (error) *error = "操作已取消";
-                return false;
-            }
-        }
-
-        manager->deleteLater();
-
-        if (!currentDownloadOk) {
-            if (error && !currentDownloadError.contains("下载已取消")) {
-                *error = currentDownloadError;
-            }
-            log(QString("下载失败 %1: %2 -> %3")
-                    .arg(logLabel,
-                         QDir::toNativeSeparators(filePath),
-                         currentDownloadError));
-            return false;
-        }
-        log(QString("下载完成 %1: %2").arg(logLabel, QDir::toNativeSeparators(filePath)));
-        return true;
-    };
-
-    if (!pumpEvents()) return false;
-
+    // ---- 1. Version metadata & JSON -------------------------------------
     const QJsonObject metadata = findVersionMetadata(versionId, error);
-    if (!error->isEmpty()) return false;
-    if (!pumpEvents()) return false;
+    if (error && !error->isEmpty()) return false;
 
     const QString versionDir = versionsRoot() + "/" + versionId;
     ensureDirectory(versionDir, error);
-    if (!error->isEmpty()) return false;
-
-    dialog.setStepLabel("获取版本信息...");
-    dialog.setStatus("正在下载版本元数据...");
-    if (!pumpEvents()) return false;
+    if (error && !error->isEmpty()) return false;
 
     const QJsonDocument versionDoc = getJson(QUrl(rewriteUrl(metadata.value("url").toString())), error);
-    if (!error->isEmpty()) return false;
+    if (error && !error->isEmpty()) return false;
 
     QFile versionFile(versionDir + "/" + versionId + ".json");
     if (!versionFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        *error = "无法写入版本 JSON";
-        return false;
+        return failWith(QStringLiteral("无法写入版本 JSON"));
     }
     versionFile.write(versionDoc.toJson(QJsonDocument::Indented));
+    versionFile.close();
 
     VersionInstallContext ctx;
     ctx.versionId = versionId;
@@ -2561,178 +2482,212 @@ bool LauncherCore::installVanillaVersionWithDialog(const QString &versionId, QSt
     ctx.instanceDir = instanceDirectoryForVersion(versionId);
     ctx.versionJson = versionDoc.object();
 
+    if (!resolveInheritance(ctx.versionJson, error)) {
+        return false;
+    }
     ensureDirectory(ctx.instanceDir, error);
-    if (!error->isEmpty()) return false;
+    if (error && !error->isEmpty()) return false;
 
     log(QString("安装版本 %1").arg(versionId));
 
+    // ---- 2. Build the full download task list ---------------------------
+    QList<DownloadTaskSpec> tasks;
+    const bool verify = shouldVerify();
+
+    // 2a. Client jar
+    {
+        const QJsonObject client = ctx.versionJson.value("downloads").toObject().value("client").toObject();
+        const QString url = rewriteUrl(client.value("url").toString());
+        if (!url.isEmpty()) {
+            DownloadTaskSpec t;
+            t.url = QUrl(url);
+            t.filePath = ctx.versionDir + "/" + ctx.versionId + ".jar";
+            t.sha1 = client.value("sha1").toString();
+            t.label = QString("客户端 Jar: %1").arg(ctx.versionId);
+            tasks.append(t);
+        }
+    }
+
+    // 2b. Libraries (artifacts + native classifiers)
     const QJsonArray libraries = ctx.versionJson.value("libraries").toArray();
-    int totalLibraryFiles = 0;
     for (const QJsonValue &value : libraries) {
         const QJsonObject library = value.toObject();
         if (!rulesAllow(library.value("rules").toArray())) continue;
         const QJsonObject downloads = library.value("downloads").toObject();
-        if (!downloads.value("artifact").toObject().isEmpty()) totalLibraryFiles++;
+
+        const QJsonObject artifact = downloads.value("artifact").toObject();
+        if (!artifact.isEmpty()) {
+            DownloadTaskSpec t;
+            t.url = QUrl(rewriteUrl(artifact.value("url").toString()));
+            t.filePath = librariesRoot() + "/" + artifact.value("path").toString();
+            t.sha1 = artifact.value("sha1").toString();
+            t.label = QString("库: %1").arg(QFileInfo(t.filePath).fileName());
+            if (t.url.isValid() && !t.filePath.isEmpty()) tasks.append(t);
+        }
+
         const QString classifier = nativeClassifier(library);
-        if (!downloads.value("classifiers").toObject().value(classifier).toObject().isEmpty()) totalLibraryFiles++;
+        const QJsonObject nativeObject = downloads.value("classifiers").toObject().value(classifier).toObject();
+        if (!nativeObject.isEmpty()) {
+            DownloadTaskSpec t;
+            t.url = QUrl(rewriteUrl(nativeObject.value("url").toString()));
+            t.filePath = librariesRoot() + "/" + nativeObject.value("path").toString();
+            t.sha1 = nativeObject.value("sha1").toString();
+            t.label = QString("原生库: %1").arg(QFileInfo(t.filePath).fileName());
+            if (t.url.isValid() && !t.filePath.isEmpty()) tasks.append(t);
+        }
     }
 
+    // 2c. Asset index + all asset objects
     const QJsonObject assetIndexObj = ctx.versionJson.value("assetIndex").toObject();
-    int totalAssetObjects = 0;
+    QStringList assetHashes;
+    QHash<QString, QString> assetPaths; // hash -> target path
     if (!assetIndexObj.isEmpty()) {
-        const QString indexFile = assetsRoot() + "/indexes/" + assetIndexObj.value("id").toString() + ".json";
+        const QString id = assetIndexObj.value("id").toString();
+        const QString indexFile = assetsRoot() + "/indexes/" + id + ".json";
+
+        DownloadTaskSpec t;
+        t.url = QUrl(rewriteUrl(assetIndexObj.value("url").toString()));
+        t.filePath = indexFile;
+        t.sha1 = assetIndexObj.value("sha1").toString();
+        t.label = QString("资源索引: %1").arg(id);
+        if (t.url.isValid() && !t.filePath.isEmpty()) tasks.append(t);
+
+        // The asset index must exist on disk before we can enqueue the
+        // individual asset objects. On a fresh install it does not exist yet,
+        // so fetch it synchronously here (it is tiny) and write it to disk.
+        // Previously the index was only queued as a download task and objects
+        // were parsed immediately from a file that did not exist, which is why
+        // assets\objects\xx\xxxx files were never downloaded until first launch.
+        if (!QFileInfo::exists(indexFile)) {
+            QString indexErr;
+            QByteArray indexBytes = getBytes(QUrl(rewriteUrl(assetIndexObj.value("url").toString())), &indexErr);
+            if (!indexErr.isEmpty() || indexBytes.isEmpty()) {
+                log(QString("资源索引预取失败: %1").arg(indexErr));
+            } else {
+                QDir().mkpath(QFileInfo(indexFile).absolutePath());
+                QFile outFile(indexFile);
+                if (outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                    outFile.write(indexBytes);
+                    outFile.close();
+                    log(QString("已预取资源索引: %1").arg(id));
+                }
+            }
+        }
+
         QFile af(indexFile);
+        QJsonObject objects;
         if (af.open(QIODevice::ReadOnly)) {
             const QJsonObject index = QJsonDocument::fromJson(af.readAll()).object();
-            totalAssetObjects = index.value("objects").toObject().size();
+            objects = index.value("objects").toObject();
+            af.close();
+        }
+        log(QString("资源索引 %1 含 %2 个对象").arg(id).arg(objects.size()));
+
+        const bool useMirror = (m_configStore.config().mirrorSource != "mojang");
+        for (auto it = objects.begin(); it != objects.end(); ++it) {
+            const QJsonObject item = it.value().toObject();
+            const QString hash = item.value("hash").toString();
+            if (hash.size() < 2) continue;
+            const QString prefix = hash.left(2);
+            const QString filePath = assetsRoot() + "/objects/" + prefix + "/" + hash;
+            QString url = useMirror
+                ? QString("https://bmclapi2.bangbang93.com/assets/%1/%2").arg(prefix, hash)
+                : QString("https://resources.download.minecraft.net/%1/%2").arg(prefix, hash);
+
+            DownloadTaskSpec t2;
+            t2.url = QUrl(url);
+            t2.filePath = filePath;
+            t2.sha1 = hash;
+            t2.label = QString("资源: %1").arg(hash.left(8));
+            tasks.append(t2);
         }
     }
 
-    const int totalSteps = 4 + totalLibraryFiles + totalAssetObjects;
-    int currentStep = 0;
-    dialog.setOverallBusy(false);
-    dialog.setOverallProgress(0, totalSteps);
+    // ---- 3. Filter already-present files -------------------------------
+    qint64 skippedBytes = 0;
+    const QList<DownloadTaskSpec> pending = DownloadTaskEngine::filterPending(tasks, verify, &skippedBytes);
 
-    dialog.setStepLabel(QString("步骤 1/5: 下载客户端 Jar"));
-    if (!pumpEvents()) return false;
+    log(QString("下载计划: 共 %1 个文件, 需下载 %2 个, 跳过 %3 个")
+            .arg(tasks.size()).arg(pending.size()).arg(tasks.size() - pending.size()));
 
-    {
-        const QJsonObject client = ctx.versionJson.value("downloads").toObject().value("client").toObject();
-        const QString url = rewriteUrl(client.value("url").toString());
-        const QString sha1 = client.value("sha1").toString();
-        const QString file = ctx.versionDir + "/" + ctx.versionId + ".jar";
-        log(QString("下载客户端 Jar: %1").arg(ctx.versionId));
-        dialog.setStatus(QString("客户端 Jar: %1").arg(ctx.versionId));
+    // ---- 4. Run the overlay + parallel engine --------------------------
+    bool cancelled = false;
+    bool success = true;
+    QString engineError;
 
-        if (!downloadWithDialog(QUrl(url), file, sha1, QString("客户端 Jar %1").arg(ctx.versionId))) {
-            return false;
-        }
-        currentStep++;
-        dialog.setOverallProgress(currentStep, totalSteps);
+    if (!pending.isEmpty() && host) {
+        DownloadOverlay overlay(host);
+        overlay.attachTo(host);
+        overlay.setTitle(QString("安装 Minecraft %1").arg(versionId));
+        overlay.setPhaseLabel(QString("正在下载 %1 个文件...").arg(pending.size()));
+        overlay.setSummaryText(QString("并发下载 · 已跳过 %1 个已存在的文件").arg(tasks.size() - pending.size()));
+        overlay.setOverallRange(0);
+        overlay.setOverallIndeterminate(true);
+
+        DownloadTaskEngine engine(m_networkManager, this);
+        engine.setConcurrency(8);
+
+        overlay.setTaskTotal(pending.size());
+
+        QEventLoop loop;
+        QObject::connect(&overlay, &DownloadOverlay::cancelled, [&]() {
+            cancelled = true;
+            engine.cancel();
+        });
+        QObject::connect(&engine, &DownloadTaskEngine::overallRangeChanged,
+                         [&overlay](qint64 total, qint64 done) {
+            overlay.setOverallRange(total);
+            overlay.setOverallValue(done);
+            overlay.setOverallIndeterminate(total <= 0);
+        });
+        QObject::connect(&engine, &DownloadTaskEngine::overallProgress,
+                         [&overlay](qint64 done, qint64 total) {
+            overlay.setOverallValue(done);
+            Q_UNUSED(total);
+        });
+        QObject::connect(&engine, &DownloadTaskEngine::taskStarted,
+                         [&overlay, &pending](int index) {
+            if (index >= 0 && index < pending.size()) {
+                overlay.addTask(index, pending.at(index).label);
+            }
+        });
+        QObject::connect(&engine, &DownloadTaskEngine::taskProgress,
+                         [&overlay](int index, qint64 received, qint64 total) {
+            overlay.setTaskProgress(index, received, total);
+            if (total > 0) {
+                overlay.setTaskStatus(index, QString("%1%").arg(static_cast<int>(received * 100 / total)));
+            }
+        });
+        QObject::connect(&engine, &DownloadTaskEngine::taskFinished,
+                         [&overlay](int index, bool ok, const QString &) {
+            overlay.setTaskDone(index, ok);
+        });
+        QObject::connect(&engine, &DownloadTaskEngine::allFinished,
+                         [&](bool ok, const QString &err) {
+            success = ok;
+            engineError = err;
+            loop.quit();
+        });
+
+        engine.start(pending);
+        loop.exec();
     }
 
-    if (!pumpEvents()) return false;
-
-    dialog.setStepLabel(QString("步骤 2/5: 下载依赖库 (%1 个文件)").arg(totalLibraryFiles));
-    {
-        int currentFile = 0;
-        for (const QJsonValue &value : libraries) {
-            const QJsonObject library = value.toObject();
-            if (!rulesAllow(library.value("rules").toArray())) continue;
-
-            const QJsonObject downloads = library.value("downloads").toObject();
-            const QJsonObject artifact = downloads.value("artifact").toObject();
-            if (!artifact.isEmpty()) {
-                const QString path = librariesRoot() + "/" + artifact.value("path").toString();
-                const QString fileName = QFileInfo(path).fileName();
-                currentFile++;
-                dialog.setStatus(QString("下载库: %1 (%2/%3)").arg(fileName).arg(currentFile).arg(totalLibraryFiles));
-
-                if (!downloadWithDialog(QUrl(rewriteUrl(artifact.value("url").toString())), path,
-                                        shouldVerify() ? artifact.value("sha1").toString() : QString(),
-                                        QString("库文件 %1").arg(fileName))) {
-                    return false;
-                }
-                currentStep++;
-                dialog.setOverallProgress(currentStep, totalSteps);
-                if (!pumpEvents()) return false;
-            }
-
-            const QString classifier = nativeClassifier(library);
-            const QJsonObject nativeObject = downloads.value("classifiers").toObject().value(classifier).toObject();
-            if (!nativeObject.isEmpty()) {
-                const QString path = librariesRoot() + "/" + nativeObject.value("path").toString();
-                const QString fileName = QFileInfo(path).fileName();
-                currentFile++;
-                dialog.setStatus(QString("下载原生库: %1 (%2/%3)").arg(fileName).arg(currentFile).arg(totalLibraryFiles));
-
-                if (!downloadWithDialog(QUrl(rewriteUrl(nativeObject.value("url").toString())), path,
-                                        shouldVerify() ? nativeObject.value("sha1").toString() : QString(),
-                                        QString("原生库 %1").arg(fileName))) {
-                    return false;
-                }
-                currentStep++;
-                dialog.setOverallProgress(currentStep, totalSteps);
-                if (!pumpEvents()) return false;
-            }
-        }
+    if (cancelled) {
+        return failWith(QStringLiteral("操作已取消"));
+    }
+    if (!success) {
+        return failWith(engineError.isEmpty() ? QStringLiteral("下载失败") : engineError);
     }
 
-    dialog.setStepLabel(QString("步骤 3/5: 下载资源索引"));
-    {
-        if (!assetIndexObj.isEmpty()) {
-            const QString id = assetIndexObj.value("id").toString();
-            const QString file = assetsRoot() + "/indexes/" + id + ".json";
-            dialog.setStatus(QString("资源索引: %1").arg(id));
-
-            if (!downloadWithDialog(QUrl(rewriteUrl(assetIndexObj.value("url").toString())), file,
-                                    shouldVerify() ? assetIndexObj.value("sha1").toString() : QString(),
-                                    QString("资源索引 %1").arg(id))) {
-                return false;
-            }
-        }
-        currentStep++;
-        dialog.setOverallProgress(currentStep, totalSteps);
-        if (!pumpEvents()) return false;
-    }
-
-    dialog.setStepLabel(QString("步骤 4/5: 下载游戏资源 (%1 个文件)").arg(totalAssetObjects));
-    {
-        if (!assetIndexObj.isEmpty()) {
-            const QString indexFile = assetsRoot() + "/indexes/" + assetIndexObj.value("id").toString() + ".json";
-            QFile af(indexFile);
-            if (!af.open(QIODevice::ReadOnly)) {
-                *error = "无法读取资源索引";
-                return false;
-            }
-            const QJsonObject index = QJsonDocument::fromJson(af.readAll()).object();
-            const QJsonObject objects = index.value("objects").toObject();
-            int currentObject = 0;
-
-            for (auto it = objects.begin(); it != objects.end(); ++it) {
-                currentObject++;
-                const QJsonObject item = it.value().toObject();
-                const QString hash = item.value("hash").toString();
-                if (hash.size() < 2) continue;
-                const QString prefix = hash.left(2);
-                const QString filePath = assetsRoot() + "/objects/" + prefix + "/" + hash;
-                QString url = QString("https://resources.download.minecraft.net/%1/%2").arg(prefix, hash);
-                if (m_configStore.config().mirrorSource != "mojang") {
-                    url = QString("https://bmclapi2.bangbang93.com/assets/%1/%2").arg(prefix, hash);
-                }
-
-                dialog.setStatus(QString("下载资源: %1/%2 (%3)").arg(currentObject).arg(totalAssetObjects).arg(hash.left(8)));
-
-                if (!downloadWithDialog(QUrl(url), filePath, shouldVerify() ? hash : QString(),
-                                        QString("资源对象 %1").arg(hash.left(8)))) {
-                    return false;
-                }
-                currentStep++;
-                dialog.setOverallProgress(currentStep, totalSteps);
-                if (!pumpEvents()) return false;
-            }
-        }
-    }
-
-    dialog.setStepLabel(QString("步骤 5/5: 解压原生库"));
-    dialog.setStatus("正在解压原生库...");
-    dialog.setBusy(true);
-    if (!pumpEvents()) return false;
-
+    // ---- 5. Extract natives & finalize ---------------------------------
+    log(QStringLiteral("下载完成，正在解压原生库..."));
     if (!extractNatives(ctx, error)) {
         return false;
     }
 
     log(QString("版本安装完成: %1").arg(versionId));
     ensureVersionProfileStored(versionId, nullptr);
-    dialog.setOverallProgress(totalSteps, totalSteps);
-    dialog.setProgress(100, 100);
-    dialog.setStatus("安装完成！");
-    dialog.setStepLabel("下载完成");
-    dialog.setBusy(false);
-    QTimer::singleShot(500, &dialog, &QDialog::accept);
-    dialog.exec();
-
     return true;
 }
 
@@ -3371,9 +3326,12 @@ QString LauncherCore::installJavaRuntimeWithDialog(int requiredMajor, QString *e
 
     log(QString("自动安装 JRE %1 (Adoptium Temurin)").arg(requiredMajor));
 
-    DownloadProgressDialog dialog(QString("下载 JRE %1").arg(requiredMajor),
-                                  QString("正在获取 JRE %1 下载信息...").arg(requiredMajor),
-                                  parentWidget);
+    // Embedded (in-window) overlay, consistent with the launch overlay.
+    QWidget *jreHost = parentWidget ? parentWidget->window() : nullptr;
+    if (!jreHost) jreHost = QApplication::activeWindow();
+    DownloadProgressDialog dialog(jreHost,
+                                  QString("下载 JRE %1").arg(requiredMajor),
+                                  QString("正在获取 JRE %1 下载信息...").arg(requiredMajor));
     dialog.showOverallProgress(true);
     dialog.setOverallBusy(true);
     dialog.setStepLabel("准备中...");
@@ -3523,8 +3481,13 @@ QString LauncherCore::installJavaRuntimeWithDialog(int requiredMajor, QString *e
     dialog.setStatus("JRE 安装完成！");
     dialog.setStepLabel("安装完成");
     dialog.setBusy(false);
-    QTimer::singleShot(500, &dialog, &QDialog::accept);
-    dialog.exec();
+    if (dialog.isEmbedded()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+        dialog.hide();
+    } else {
+        QTimer::singleShot(500, &dialog, &QDialog::accept);
+        dialog.exec();
+    }
 
     return java;
 }
@@ -4086,6 +4049,8 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
 {
     const bool verify = shouldVerify();
     const QJsonObject versionJson = ctx.versionJson;
+    const bool useMirror = (m_configStore.config().mirrorSource != "mojang");
+
     const auto checkFile = [&](const QString &filePath, const QString &expectedSha1) -> bool {
         const QFileInfo fi(filePath);
         if (!fi.exists()) return false;
@@ -4093,16 +4058,28 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
         return verifySha1(filePath, expectedSha1);
     };
 
+    // Helper: emit per-file progress to the outer dialog, then download if needed.
+    auto ensureFile = [&](const QUrl &url, const QString &filePath, const QString &sha1,
+                          const QString &label) -> bool {
+        if (checkFile(filePath, sha1)) return true;
+        emit progressStarted(label);
+        emit progressUpdated(0, 100, label);
+        const bool ok = downloadToFile(url, filePath, error, verify ? sha1 : QString());
+        if (ok) {
+            emit progressUpdated(100, 100, label);
+            emit progressFinished(label);
+        }
+        return ok;
+    };
+
     const QJsonObject client = versionJson.value("downloads").toObject().value("client").toObject();
     if (!client.isEmpty()) {
         const QString filePath = ctx.versionDir + "/" + ctx.versionId + ".jar";
-        const QString sha1 = client.value("sha1").toString();
-        if (!checkFile(filePath, sha1)) {
-            const QString url = rewriteUrl(client.value("url").toString());
-            if (!downloadToFile(QUrl(url), filePath, error, sha1)) {
-                if (error && error->isEmpty()) *error = QString("客户端 Jar 丢失: %1").arg(ctx.versionId);
-                return false;
-            }
+        if (!ensureFile(QUrl(rewriteUrl(client.value("url").toString())), filePath,
+                        client.value("sha1").toString(),
+                        QString("客户端 Jar: %1").arg(ctx.versionId))) {
+            if (error && error->isEmpty()) *error = QString("客户端 Jar 丢失: %1").arg(ctx.versionId);
+            return false;
         }
     }
 
@@ -4117,13 +4094,11 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
             const QString filePath = librariesRoot() + "/" + artifact.value("path").toString();
             const QString fileName = QFileInfo(filePath).fileName();
             if (isAllowedNativesJarForCurrentArch(fileName)) {
-                const QString sha1 = artifact.value("sha1").toString();
-                if (!checkFile(filePath, sha1)) {
-                    const QString url = rewriteUrl(artifact.value("url").toString());
-                    if (!downloadToFile(QUrl(url), filePath, error, sha1)) {
-                        if (error && error->isEmpty()) *error = QString("库文件丢失: %1").arg(fileName);
-                        return false;
-                    }
+                if (!ensureFile(QUrl(rewriteUrl(artifact.value("url").toString())), filePath,
+                                artifact.value("sha1").toString(),
+                                QString("库: %1").arg(fileName))) {
+                    if (error && error->isEmpty()) *error = QString("库文件丢失: %1").arg(fileName);
+                    return false;
                 }
             }
         }
@@ -4134,13 +4109,11 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
             const QString filePath = librariesRoot() + "/" + nativeObject.value("path").toString();
             const QString fileName = QFileInfo(filePath).fileName();
             if (isAllowedNativesJarForCurrentArch(fileName)) {
-                const QString sha1 = nativeObject.value("sha1").toString();
-                if (!checkFile(filePath, sha1)) {
-                    const QString url = rewriteUrl(nativeObject.value("url").toString());
-                    if (!downloadToFile(QUrl(url), filePath, error, sha1)) {
-                        if (error && error->isEmpty()) *error = QString("原生库文件丢失: %1").arg(fileName);
-                        return false;
-                    }
+                if (!ensureFile(QUrl(rewriteUrl(nativeObject.value("url").toString())), filePath,
+                                nativeObject.value("sha1").toString(),
+                                QString("原生库: %1").arg(fileName))) {
+                    if (error && error->isEmpty()) *error = QString("原生库文件丢失: %1").arg(fileName);
+                    return false;
                 }
             }
         }
@@ -4150,13 +4123,11 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
     if (!assetIndexObj.isEmpty()) {
         const QString id = assetIndexObj.value("id").toString();
         const QString indexPath = assetsRoot() + "/indexes/" + id + ".json";
-        const QString indexSha1 = assetIndexObj.value("sha1").toString();
-        if (!checkFile(indexPath, indexSha1)) {
-            const QString url = rewriteUrl(assetIndexObj.value("url").toString());
-            if (!downloadToFile(QUrl(url), indexPath, error, indexSha1)) {
-                if (error && error->isEmpty()) *error = QString("资源索引丢失: %1").arg(id);
-                return false;
-            }
+        if (!ensureFile(QUrl(rewriteUrl(assetIndexObj.value("url").toString())), indexPath,
+                        assetIndexObj.value("sha1").toString(),
+                        QString("资源索引: %1").arg(id))) {
+            if (error && error->isEmpty()) *error = QString("资源索引丢失: %1").arg(id);
+            return false;
         }
 
         QFile af(indexPath);
@@ -4165,6 +4136,7 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
             return false;
         }
         const QJsonObject index = QJsonDocument::fromJson(af.readAll()).object();
+        af.close();
         const QJsonObject objects = index.value("objects").toObject();
         const QString objectsRoot = assetsRoot() + "/objects";
         for (auto it = objects.begin(); it != objects.end(); ++it) {
@@ -4172,12 +4144,13 @@ bool LauncherCore::ensureLaunchAssetsAvailable(const VersionInstallContext &ctx,
             const QString hash = meta.value("hash").toString();
             if (hash.size() < 2) continue;
             const QString filePath = objectsRoot + "/" + hash.left(2) + "/" + hash;
-            if (!checkFile(filePath, hash)) {
-                const QString url = QStringLiteral("https://resources.download.minecraft.net/%1/%2").arg(hash.left(2), hash);
-                if (!downloadToFile(QUrl(rewriteUrl(url)), filePath, error, verify ? hash : QString())) {
-                    if (error && error->isEmpty()) *error = QString("资源对象丢失: %1").arg(hash);
-                    return false;
-                }
+            if (checkFile(filePath, hash)) continue;
+            const QString url = useMirror
+                ? QString("https://bmclapi2.bangbang93.com/assets/%1/%2").arg(hash.left(2), hash)
+                : QString("https://resources.download.minecraft.net/%1/%2").arg(hash.left(2), hash);
+            if (!ensureFile(QUrl(rewriteUrl(url)), filePath, hash, QString("资源: %1").arg(hash.left(8)))) {
+                if (error && error->isEmpty()) *error = QString("资源对象丢失: %1").arg(hash);
+                return false;
             }
         }
     }
@@ -4446,8 +4419,13 @@ bool LauncherCore::ensureLaunchAssetsAvailableWithDialog(const VersionInstallCon
     dialog.setStepLabel("文件校验完成");
     dialog.setStatus("所有文件完整");
     dialog.setBusy(false);
-    QTimer::singleShot(250, &dialog, &QDialog::accept);
-    dialog.exec();
+    if (dialog.isEmbedded()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 250);
+        dialog.hide();
+    } else {
+        QTimer::singleShot(250, &dialog, &QDialog::accept);
+        dialog.exec();
+    }
     return true;
 }
 
@@ -4579,9 +4557,10 @@ bool LauncherCore::launchSelectedVersionWithDialog(QString *error, QWidget *pare
     }
     const LauncherVersionProfile profile = effectiveVersionProfile(config.selectedVersion);
 
-    DownloadProgressDialog dialog("启动游戏",
-                                  "正在准备启动 Minecraft...",
-                                  parentWidget);
+    // Embedded (in-window) overlay on the main window, HMCL-style.
+    QWidget *host = parentWidget ? parentWidget->window() : nullptr;
+    if (!host) host = QApplication::activeWindow();
+    DownloadProgressDialog dialog(host, "启动游戏", "正在准备启动 Minecraft...");
     dialog.showOverallProgress(true);
     dialog.setOverallBusy(true);
     dialog.setStepLabel("准备中...");
@@ -4592,6 +4571,22 @@ bool LauncherCore::launchSelectedVersionWithDialog(QString *error, QWidget *pare
     bool cancelled = false;
     QObject::connect(&dialog, &DownloadProgressDialog::cancelled, [&cancelled]() {
         cancelled = true;
+    });
+
+    // Show per-file download progress inside the launch window (HMCL-style):
+    // library and asset completion downloads report through these signals.
+    QObject::connect(this, &LauncherCore::progressStarted, &dialog,
+                     [&dialog](const QString &message) {
+        dialog.setStatus(message);
+    });
+    QObject::connect(this, &LauncherCore::progressUpdated, &dialog,
+                     [&dialog](int value, int maximum, const QString &message) {
+        dialog.setProgress(value, maximum);
+        dialog.setStatus(message);
+    });
+    QObject::connect(this, &LauncherCore::progressFinished, &dialog,
+                     [&dialog](const QString &message) {
+        dialog.setStatus(message);
     });
 
     auto pumpEvents = [&]() -> bool {
@@ -4797,8 +4792,14 @@ bool LauncherCore::launchSelectedVersionWithDialog(QString *error, QWidget *pare
     dialog.setStatus("游戏已启动！");
     dialog.setStepLabel("启动完成");
     dialog.setBusy(false);
-    QTimer::singleShot(800, &dialog, &QDialog::accept);
-    dialog.exec();
+    if (dialog.isEmbedded()) {
+        // Embedded overlay: keep the success state visible briefly, then hide.
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 800);
+        dialog.hide();
+    } else {
+        QTimer::singleShot(800, &dialog, &QDialog::accept);
+        dialog.exec();
+    }
 
     return true;
 }

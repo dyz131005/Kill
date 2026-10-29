@@ -36,6 +36,9 @@
 #include <QGraphicsDropShadowEffect>
 #include <QListWidget>
 #include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
+#include "widget_effects.h"
+#include <QCloseEvent>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QRadioButton>
@@ -475,6 +478,12 @@ MainWindow::MainWindow(QWidget *parent)
     appendLog(QString("日志文件: %1").arg(QDir::toNativeSeparators(m_logFilePath)));
     loadConfigToUi();
     refreshInstalledVersionsUi();
+
+    // Smooth startup fade-in for the initial page (respects animation level).
+    QTimer::singleShot(0, this, [this]() {
+        if (m_mainTabsPage)
+            fadeInWidget(m_mainTabsPage, m_core.configStore()->config().animationLevel == 1 ? 180 : 260);
+    });
 }
 
 void MainWindow::buildUi()
@@ -506,6 +515,34 @@ void MainWindow::buildUi()
     m_pluginsTab = buildPluginsTab();
     tabs->addTab(m_pluginsTab, "插件");
     tabsLayout->addWidget(tabs, 1);
+
+    // Smooth slide transition for main tab page switches (respects animation level).
+    // Clicking a tab to the RIGHT of the current one: new page slides in from the
+    // left toward the right; clicking a tab to the LEFT: slides in from the right.
+    connect(tabs, &QTabWidget::currentChanged, this, [this, tabs](int index) {
+        QWidget *page = tabs->widget(index);
+        if (!page) return;
+        const int level = m_core.configStore()->config().animationLevel;
+        if (level <= 0) return;
+
+        const int prev = m_lastMainTabIndex;
+        m_lastMainTabIndex = index;
+        if (prev < 0 || prev == index) {
+            // First show / no direction info: just fade in.
+            fadeInWidget(page, level == 1 ? 150 : 200);
+            return;
+        }
+
+        if (level == 1) {
+            // Partial: fade only.
+            fadeInWidget(page, 150);
+            return;
+        }
+
+        // Full: slide horizontally. New page from the left when moving right.
+        const bool movedRight = (index > prev);
+        WidgetAnim::slideIn(page, /*fromRight=*/!movedRight, 240);
+    });
 
     m_mainStackedWidget->addWidget(m_mainTabsPage);
     m_aboutPage = buildAboutPage();
@@ -991,13 +1028,77 @@ void MainWindow::toggleTheme()
 void MainWindow::animateButton(QPushButton *button)
 {
     if (!button) return;
+    const int level = m_core.configStore()->config().animationLevel;
+    if (level <= 0) return;              // animations off
+    if (level == 1) return;              // partial: no bounce on buttons
     auto *animation = new QPropertyAnimation(button, "geometry", this);
     const QRect startRect = button->geometry();
-    animation->setDuration(100);
+    animation->setDuration(110);
+    animation->setEasingCurve(QEasingCurve::OutCubic);
     animation->setKeyValueAt(0, startRect);
     animation->setKeyValueAt(0.5, QRect(startRect.x(), startRect.y() + 2, startRect.width(), startRect.height()));
     animation->setKeyValueAt(1, startRect);
     animation->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::fadeInWidget(QWidget *widget, int durationMs)
+{
+    if (!widget) return;
+    const int level = m_core.configStore()->config().animationLevel;
+    if (level <= 0) return;              // animations off
+    // Partial (1) and full (2) both get a smooth opacity fade.
+    if (level == 1) {
+        // fade-only, no geometry move
+    }
+    auto *effect = new QGraphicsOpacityEffect(widget);
+    widget->setGraphicsEffect(effect);
+    auto *animation = new QPropertyAnimation(effect, "opacity", this);
+    animation->setDuration(durationMs);
+    animation->setStartValue(0.0);
+    animation->setEndValue(1.0);
+    animation->setEasingCurve(QEasingCurve::OutCubic);
+    connect(animation, &QPropertyAnimation::finished, this, [widget]() {
+        // Remove the effect so it doesn't affect later painting / performance.
+        widget->setGraphicsEffect(nullptr);
+    });
+    animation->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::animateStackSwitch(QStackedWidget *stack, int index)
+{
+    if (!stack) return;
+    if (index < 0 || index >= stack->count() || index == stack->currentIndex()) return;
+    stack->setCurrentIndex(index);
+    const int level = m_core.configStore()->config().animationLevel;
+    if (level <= 0) return;
+    fadeInWidget(stack->widget(index), level == 1 ? 140 : 200);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    const int level = m_core.configStore()->config().animationLevel;
+    // If animations are off, or we've already played the close animation, accept immediately.
+    if (level <= 0 || m_closing) {
+        event->accept();
+        return;
+    }
+
+    event->ignore();
+    m_closing = true;
+
+    QWidget *content = centralWidget();
+    if (!content) {
+        m_closing = false;
+        event->accept();
+        return;
+    }
+
+    // Slide the whole window content upward and fade out, then close.
+    WidgetAnim::slideUpOut(content, level == 1 ? 180 : 260, [this]() {
+        // Keep m_closing = true so the subsequent close() is accepted immediately
+        // without replaying the animation (avoids an infinite close loop).
+        close();
+    });
 }
 
 void MainWindow::animateExpand(QWidget *widget, bool expand, int durationMs)
@@ -1093,7 +1194,7 @@ QWidget *MainWindow::buildDownloadTab()
 
         connect(btn, &QPushButton::clicked, this, [this, btn, i] {
             animateButton(btn);
-            m_downloadStackedWidget->setCurrentIndex(i);
+            animateStackSwitch(m_downloadStackedWidget, i);
         });
     }
     navLayout->addStretch();
@@ -2442,6 +2543,39 @@ QWidget *MainWindow::buildHomeTab()
         title->setStyleSheet("font-size: 20px; font-weight: 700; margin-bottom: 4px;");
         contentLayout->addWidget(title);
 
+        // HMCL-style selected-version header card (big instance name + type).
+        auto *headerCard = new QFrame(content);
+        headerCard->setObjectName("launchHeaderCard");
+        headerCard->setStyleSheet(
+            "#launchHeaderCard {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e5e7eb;"
+            "  border-radius: 16px;"
+            "}"
+        );
+        auto *headerRow = new QHBoxLayout(headerCard);
+        headerRow->setContentsMargins(22, 18, 22, 18);
+        headerRow->setSpacing(16);
+
+        auto *headerIcon = new QLabel(headerCard);
+        headerIcon->setFixedSize(56, 56);
+        headerIcon->setScaledContents(true);
+        headerIcon->setPixmap(versionIconFor("", QString()).pixmap(56, 56));
+        m_homeHeaderIcon = headerIcon;
+        headerRow->addWidget(headerIcon, 0, Qt::AlignVCenter);
+
+        auto *headerText = new QVBoxLayout();
+        headerText->setSpacing(4);
+        m_homeHeaderTitle = new QLabel("未选择版本", headerCard);
+        m_homeHeaderTitle->setStyleSheet("font-size: 22px; font-weight: 800; color: #111827;");
+        headerText->addWidget(m_homeHeaderTitle);
+        m_homeHeaderSubtitle = new QLabel("请选择一个已安装的游戏版本", headerCard);
+        m_homeHeaderSubtitle->setStyleSheet("font-size: 13px; color: #6b7280;");
+        headerText->addWidget(m_homeHeaderSubtitle);
+        headerRow->addLayout(headerText, 1);
+
+        contentLayout->addWidget(headerCard);
+
         auto *box = new QGroupBox("选择游戏版本", content);
         box->setStyleSheet(groupBoxStyle());
         auto *boxLayout = new QVBoxLayout(box);
@@ -2524,7 +2658,7 @@ QWidget *MainWindow::buildHomeTab()
     for (int i = 0; i < m_homeNavButtons.size(); ++i) {
         connect(m_homeNavButtons[i], &QPushButton::clicked, this, [this, i] {
             animateButton(m_homeNavButtons[i]);
-            m_homeStackedWidget->setCurrentIndex(i);
+            animateStackSwitch(m_homeStackedWidget, i);
         });
     }
 
@@ -2726,6 +2860,10 @@ QWidget *MainWindow::buildSettingsTab()
     m_verifyFilesCheck = new QCheckBox("启用文件校验", baseBox);
     m_versionIsolationCheck = new QCheckBox("启用版本隔离", baseBox);
     m_softwareOpenGLCheck = new QCheckBox("强制软件 OpenGL (虚拟机/无显卡加速时勾选)", baseBox);
+    m_animationCombo = new QComboBox(baseBox);
+    m_animationCombo->addItem("完全开启（全部过渡动画）", 2);
+    m_animationCombo->addItem("部分（仅淡入淡出）", 1);
+    m_animationCombo->addItem("完全关闭", 0);
 
     m_minMemorySpin->setRange(512, 65536);
     m_maxMemorySpin->setRange(512, 65536);
@@ -2771,6 +2909,7 @@ QWidget *MainWindow::buildSettingsTab()
     baseLayout->addRow("", m_verifyFilesCheck);
     baseLayout->addRow("", m_versionIsolationCheck);
     baseLayout->addRow("", m_softwareOpenGLCheck);
+    baseLayout->addRow("界面动画", m_animationCombo);
     baseLayout->addRow("", saveButton);
 
     layout->addWidget(baseBox);
@@ -2917,7 +3056,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("1.8", infoBox);
+    auto *versionLabel = new QLabel("1.9", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -3059,6 +3198,10 @@ void MainWindow::loadConfigToUi()
     m_verifyFilesCheck->setChecked(config.verifyFiles);
     m_versionIsolationCheck->setChecked(config.versionIsolation);
     m_softwareOpenGLCheck->setChecked(config.softwareOpenGL);
+    if (m_animationCombo) {
+        const int idx = m_animationCombo->findData(config.animationLevel);
+        if (idx >= 0) m_animationCombo->setCurrentIndex(idx);
+    }
 
     {
         const QString mode = config.mirrorMode.trimmed().toLower();
@@ -3101,6 +3244,9 @@ bool MainWindow::saveUiToConfig()
     config.verifyFiles = m_verifyFilesCheck->isChecked();
     config.versionIsolation = m_versionIsolationCheck->isChecked();
     config.softwareOpenGL = m_softwareOpenGLCheck->isChecked();
+    if (m_animationCombo) {
+        config.animationLevel = m_animationCombo->currentData().toInt();
+    }
     config.selectedVersion = currentManagedVersion();
     config.selectedAccountIndex = m_homeAccountCombo->currentData().toInt();
 
@@ -3217,6 +3363,29 @@ void MainWindow::syncSelectedVersion(const QString &versionId, QComboBox *source
             }
         }
     }
+    updateLaunchHeader(versionId);
+}
+
+void MainWindow::updateLaunchHeader(const QString &versionId)
+{
+    if (!m_homeHeaderTitle || !m_homeHeaderSubtitle || !m_homeHeaderIcon) return;
+    if (versionId.isEmpty()) {
+        m_homeHeaderTitle->setText("未选择版本");
+        m_homeHeaderSubtitle->setText("请选择一个已安装的游戏版本");
+        m_homeHeaderIcon->setPixmap(versionIconFor("", QString()).pixmap(56, 56));
+        return;
+    }
+    // Detect loader type from installed loader files for a nicer subtitle/icon.
+    QString loaderType;
+    const QJsonArray loaders = m_core.scanInstalledLoaders(versionId);
+    if (!loaders.isEmpty()) {
+        loaderType = loaders.first().toObject().value("loaderType").toString();
+    }
+    m_homeHeaderTitle->setText(versionId);
+    m_homeHeaderSubtitle->setText(loaderType.isEmpty()
+                                      ? QStringLiteral("原版游戏")
+                                      : QStringLiteral("%1 模组加载器").arg(loaderType));
+    m_homeHeaderIcon->setPixmap(versionIconFor(versionId, loaderType).pixmap(56, 56));
 }
 
 QString MainWindow::currentManagedVersion() const
@@ -5486,14 +5655,16 @@ void MainWindow::showVersionInstallDialog(const QJsonObject &versionObj, QWidget
         }
         QString verId = versionObj.value("id").toString();
         appendLog(QString("开始安装版本 [%1] -> %2").arg(instName, verId));
+        // Close the small config dialog first; the download runs as an in-window
+        // overlay attached to the main window (HMCL-style), not a separate window.
+        dialog->accept();
         QString error;
-        bool ok = m_core.installVanillaVersionWithDialog(verId, &error, dialog);
+        bool ok = m_core.installVanillaVersionWithDialog(verId, &error, this);
         if (!ok && !error.isEmpty()) {
-            showError(dialog, error);
+            showError(this, error);
             return;
         }
-        showInfo(dialog, QString("版本 %1 安装任务已启动，请查看日志进度").arg(instName));
-        dialog->accept();
+        showInfo(this, QString("版本 %1 安装完成").arg(instName));
     });
 
     dialog->exec();
@@ -6225,7 +6396,7 @@ QWidget *MainWindow::buildVersionManagementTab()
     for (int i = 0; i < m_manageNavButtons.size(); ++i) {
         connect(m_manageNavButtons[i], &QPushButton::clicked, this, [this, i] {
             animateButton(m_manageNavButtons[i]);
-            m_manageStackedWidget->setCurrentIndex(i);
+            animateStackSwitch(m_manageStackedWidget, i);
         });
     }
 

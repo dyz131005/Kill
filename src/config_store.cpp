@@ -132,6 +132,7 @@ QJsonObject LauncherConfig::toJson() const
         {"verifyFiles", verifyFiles},
         {"versionIsolation", versionIsolation},
         {"softwareOpenGL", softwareOpenGL},
+        {"animationLevel", animationLevel},
         {"managedMods", toArray(managedMods)},
         {"managedResourcePacks", toArray(managedResourcePacks)},
         {"managedModpacks", toArray(managedModpacks)},
@@ -173,6 +174,7 @@ LauncherConfig LauncherConfig::fromJson(const QJsonObject &object)
     config.verifyFiles = object.value("verifyFiles").toBool(config.verifyFiles);
     config.versionIsolation = object.value("versionIsolation").toBool(config.versionIsolation);
     config.softwareOpenGL = object.value("softwareOpenGL").toBool(config.softwareOpenGL);
+    config.animationLevel = object.value("animationLevel").toInt(config.animationLevel);
     config.selectedAccountIndex = object.value("selectedAccountIndex").toInt(-1);
 
     auto fromArray = [](const QJsonValue &value) {

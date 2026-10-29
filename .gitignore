@@ -80,3 +80,16 @@ build_static/
 dist_test/
 
 build_ssl/
+
+# ---------- PPT 生成（PPTAgent） ----------
+# 仅保留源码：ppt-workspace/slides/、index.html、task.json、README.md 及 *.bat
+# 以下为生成物 / 缓存 / 运行时，不入库
+ppt-workspace/qa/
+ppt-workspace/workspace-state.json
+ppt-workspace/answer.pptx
+ppt-bin/
+
+# ---------- PPT 演示相关（不属于启动器源码，忽略） ----------
+ppt-*.bat
+ppt-workspace/
+ppt-bin/

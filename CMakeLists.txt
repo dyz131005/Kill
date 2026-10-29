@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Kill VERSION 1.8.0 LANGUAGES CXX RC)
+project(Kill VERSION 1.9.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +47,12 @@ set(KILL_SOURCES
     src/download_progress_dialog.cpp
     src/download_manager.h
     src/download_manager.cpp
+    src/download_overlay.h
+    src/download_overlay.cpp
+    src/download_task_engine.h
+    src/download_task_engine.cpp
+    src/widget_effects.h
+    src/widget_effects.cpp
     src/zip_utils.h
     src/zip_utils.cpp
     src/plugins/plugin_api.h

@@ -66,6 +66,8 @@ struct LauncherConfig {
     bool verifyFiles = true;
     bool versionIsolation = true;
     bool softwareOpenGL = false;
+    // Animation level: 0 = off, 1 = partial (fade only), 2 = full (all transitions)
+    int animationLevel = 2;
     QStringList managedMods;
     QStringList managedResourcePacks;
     QStringList managedModpacks;
