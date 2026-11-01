@@ -5,6 +5,8 @@
 #endif
 
 #include <QCryptographicHash>
+#include <QEventLoop>
+#include <QTimer>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QMetaEnum>
@@ -137,6 +139,11 @@ bool DownloadManager::downloadFile(const QUrl &url,
     m_checksumAlgo = detectChecksumAlgo(m_expectedChecksum);
     m_cancelled = false;
     m_errorString.clear();
+    m_redirectCount = 0;
+    m_suppressReferer = false;
+    m_retriedWithoutReferer = false;
+    m_suppressAccept = false;
+    m_baseHeaders = headers;
 
     if (error) {
         error->clear();
@@ -153,7 +160,14 @@ bool DownloadManager::downloadFile(const QUrl &url,
         }
     }
 
-    m_dialog = new DownloadProgressDialog(title, description, parentWidget);
+    // Prefer an in-window overlay (HMCL style) when we have a visible host
+    // widget; fall back to a standalone modal dialog otherwise.
+    const bool embedded = (parentWidget != nullptr && parentWidget->isVisible());
+    if (embedded) {
+        m_dialog = new DownloadProgressDialog(parentWidget, title, description);
+    } else {
+        m_dialog = new DownloadProgressDialog(title, description, parentWidget);
+    }
     connect(m_dialog, &DownloadProgressDialog::cancelled, this, &DownloadManager::onCancel);
 
     if (!startDownload(url, filePath, expectedChecksum, headers)) {
@@ -163,8 +177,22 @@ bool DownloadManager::downloadFile(const QUrl &url,
         return false;
     }
 
-    const int dialogResult = m_dialog->exec();
-    const bool success = (dialogResult == QDialog::Accepted);
+    bool success = false;
+    if (embedded) {
+        // Run a local event loop while the overlay is shown; it is quit when the
+        // download finishes (accept/reject) or the user cancels.
+        m_dialog->show();
+        QEventLoop loop;
+        m_embeddedLoop = &loop;
+        connect(m_dialog, &QDialog::finished, &loop, &QEventLoop::quit);
+        connect(this, &DownloadManager::downloadFinished, &loop, &QEventLoop::quit);
+        loop.exec();
+        m_embeddedLoop = nullptr;
+        success = (m_dialog && m_dialog->result() == QDialog::Accepted);
+    } else {
+        const int dialogResult = m_dialog->exec();
+        success = (dialogResult == QDialog::Accepted);
+    }
 
     if (m_reply) {
         m_reply->deleteLater();
@@ -174,7 +202,10 @@ bool DownloadManager::downloadFile(const QUrl &url,
         m_file->deleteLater();
         m_file = nullptr;
     }
-    m_dialog->deleteLater();
+    if (m_dialog) {
+        m_dialog->hide();
+        m_dialog->deleteLater();
+    }
     m_dialog = nullptr;
 
     if (m_cancelled || !success) {
@@ -199,6 +230,11 @@ void DownloadManager::downloadFileSilent(const QUrl &url,
     m_checksumAlgo = detectChecksumAlgo(m_expectedChecksum);
     m_cancelled = false;
     m_errorString.clear();
+    m_redirectCount = 0;
+    m_suppressReferer = false;
+    m_retriedWithoutReferer = false;
+    m_suppressAccept = false;
+    m_baseHeaders = headers;
 
     if (QFile::exists(filePath)) {
         if (m_checksumAlgo == ChecksumAlgo::None) {
@@ -283,12 +319,34 @@ bool DownloadManager::startDownload(const QUrl &url,
         return false;
     }
 
+    m_requestUrl = url;
+
     QNetworkRequest request(url);
+    // IMPORTANT: The CERNET mirror front-end (mirrors.cernet.edu.cn), which
+    // bmclapi2 redirects to for many artifacts (notably net/neoforged/neoform),
+    // applies a WAF that whitelists ONLY the stock curl User-Agent. Verified
+    // empirically: "curl/8.4.0" -> HTTP 200; a browser UA, "Java/17", "Wget",
+    // an empty UA, or no UA at all -> HTTP 403 (an HTML error page). Using the
+    // curl UA is what makes neoform/installer/lib downloads succeed on Win7
+    // networks behind the CN mirrors. This must NOT be changed to a browser or
+    // launcher UA, or mirror downloads will fail with 403.
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("curl/8.4.0"));
     for (const auto &header : headers) {
         request.setRawHeader(header.first.toUtf8(), header.second.toUtf8());
     }
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    // Manual redirects so custom headers (Accept/Referer) are preserved across
+    // cross-host hops (Qt otherwise drops them, causing 403 on the final mirror).
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    // Fail fast when a host is unreachable (e.g. blocked maven mirrors). Without
+    // this, a blocked TCP connect can hang for minutes and look like a freeze.
+    // Generous transfer timeout: large library/installer downloads on slow
+    // machines (e.g. Win7) can take well over 20s. Blocked hosts still fail,
+    // just a bit later.
+    request.setTransferTimeout(120000);
 
+    if (m_debugLog) {
+        m_debugLog(QStringLiteral("[net] GET %1 (redirect#%2)").arg(url.toString()).arg(m_redirectCount));
+    }
     m_reply = m_networkManager->get(request);
     if (!m_reply) {
         m_errorString = "无法创建网络请求";
@@ -351,6 +409,54 @@ void DownloadManager::onFinished()
         }
     }
 
+    // Manual redirect follow: preserve headers (Accept/Referer) on every hop.
+    if (m_reply && !m_cancelled && httpStatus >= 300 && httpStatus < 400) {
+        const QByteArray loc = m_reply->rawHeader("Location");
+        if (!loc.isEmpty() && m_redirectCount < 10) {
+            const QUrl next = m_reply->url().resolved(QUrl(QString::fromUtf8(loc)));
+            if (m_debugLog) m_debugLog(QStringLiteral("[net] redirect(%1) %2 -> %3")
+                                           .arg(httpStatus).arg(replyUrl, next.toString()));
+            m_reply->deleteLater();
+            m_reply = nullptr;
+            // Discard the old file handle; startDownload() will recreate it.
+            if (m_file) {
+                m_file->flush();
+                m_file->close();
+                m_file->deleteLater();
+                m_file = nullptr;
+            }
+            ++m_redirectCount;
+            if (!startDownload(next, m_filePath, m_expectedChecksum, m_baseHeaders)) {
+                if (m_silentMode) emit downloadFinished(false, m_errorString);
+                else if (m_dialog) m_dialog->reject();
+            }
+            return;
+        }
+    }
+
+    // Some mirror paths 403 specifically because a Referer was sent. Retry once
+    // without the Referer header to cover that inconsistent WAF behaviour.
+    if (m_reply && !m_cancelled && (httpStatus == 403 || httpStatus == 401)
+        && !m_suppressReferer && !m_retriedWithoutReferer) {
+        m_retriedWithoutReferer = true;
+        m_suppressReferer = true;
+        m_suppressAccept = true;
+        const QUrl retryUrl = m_reply->url();
+        m_reply->deleteLater();
+        m_reply = nullptr;
+        if (m_file) {
+            m_file->flush();
+            m_file->close();
+            m_file->deleteLater();
+            m_file = nullptr;
+        }
+        if (!startDownload(retryUrl, m_filePath, m_expectedChecksum, m_baseHeaders)) {
+            if (m_silentMode) emit downloadFinished(false, m_errorString);
+            else if (m_dialog) m_dialog->reject();
+        }
+        return;
+    }
+
     if (m_file) {
         m_file->flush();
         m_file->close();
@@ -390,6 +496,29 @@ void DownloadManager::onFinished()
         checksumDetail = "(未提供校验值，跳过)";
     }
 
+    // Validate that a JAR was actually downloaded. Some mirrors return an HTML
+    // error page (200/403) instead of the file; writing that as a jar makes the
+    // installer fail later with a cryptic error. A real JAR/ZIP starts with 'PK'.
+    if (success && checksumOk && m_filePath.endsWith(".jar", Qt::CaseInsensitive)) {
+        QFile probe(tempPath);
+        if (probe.open(QIODevice::ReadOnly)) {
+            const QByteArray magic = probe.read(4);
+            probe.close();
+            if (magic.size() < 2 || magic.at(0) != 'P' || magic.at(1) != 'K') {
+                success = false;
+                QString snippet;
+                QFile body(tempPath);
+                if (body.open(QIODevice::ReadOnly)) {
+                    snippet = QString::fromUtf8(body.read(120)).simplified();
+                    body.close();
+                }
+                m_errorString = QString("下载内容不是有效的 JAR 文件（可能被镜像站拒绝，返回了网页）。返回内容片段: %1")
+                                    .arg(snippet.left(80));
+                QFile::remove(tempPath);
+            }
+        }
+    }
+
     if (success && checksumOk) {
         QFile::remove(m_filePath);
         if (!QFile::rename(tempPath, m_filePath)) {
@@ -408,6 +537,14 @@ void DownloadManager::onFinished()
             m_dialog->accept();
         }
     } else {
+        // Transfer timeout / aborted connection (not user-initiated cancel):
+        // surface a clear message instead of an empty error.
+        if (!m_cancelled && m_errorString.isEmpty() && m_reply
+            && (netError == QNetworkReply::OperationCanceledError
+                || netError == QNetworkReply::TimeoutError)) {
+            m_errorString = QString("下载超时或被中断（连接 %1 在限定时间内未完成，可能是网络慢或镜像不稳定）")
+                                .arg(replyUrl.isEmpty() ? QStringLiteral("未知") : replyUrl);
+        }
         if (m_reply && netError != QNetworkReply::NoError
                    && netError != QNetworkReply::OperationCanceledError
                    && m_errorString.isEmpty()) {
@@ -436,6 +573,9 @@ void DownloadManager::onFinished()
                 m_errorString = QString("下载失败[%1]").arg(errDetail);
             } else {
                 m_errorString = QString("%1 [%2]").arg(rawErr, errDetail);
+            }
+            if (m_debugLog) m_debugLog(QStringLiteral("[net] FAIL url=%1 %2").arg(replyUrl, m_errorString));
+            {
             }
         } else if (m_cancelled && m_errorString.isEmpty()) {
             m_errorString = "下载已取消";

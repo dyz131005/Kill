@@ -18,6 +18,11 @@ struct DownloadTaskSpec {
     QString sha1;        // expected checksum (optional)
     QString label;       // short display name
     QList<QPair<QString, QString>> headers;
+
+    // Optional alternate URLs tried in order when the primary `url` fails
+    // at the transport/protocol level (e.g. mirror drops the connection).
+    // Checksum failures are NOT retried against fallbacks.
+    QList<QUrl> fallbackUrls;
 };
 
 // HMCL-style parallel download engine.
@@ -72,11 +77,16 @@ private:
         qint64 received = 0;
         qint64 total = 0;
         QString tempPath;
+        // Index of the URL currently in use: 0 = primary, 1..N = fallbacks.
+        int urlIndex = 0;
     };
 
     void pump();
     void finishActive(Active *a, bool ok, const QString &error);
     void emitOverall();
+
+    // Start (or restart) the transfer for `a` using its current urlIndex.
+    bool beginRequest(Active *a);
 
     QNetworkAccessManager *m_manager = nullptr;
     QList<DownloadTaskSpec> m_pending;

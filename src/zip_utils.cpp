@@ -99,4 +99,117 @@ bool extractArchive(const QString &archivePath,
     return true;
 }
 
+bool readFileFromArchive(const QString &archivePath,
+                         const QString &entryName,
+                         QByteArray *outBytes,
+                         QString *error)
+{
+    if (error) error->clear();
+    if (outBytes) outBytes->clear();
+
+    if (!QFileInfo::exists(archivePath)) {
+        if (error) *error = QString("archive missing: %1").arg(archivePath);
+        return false;
+    }
+
+    QZipReader reader(archivePath);
+    if (!reader.isReadable()) {
+        if (error) *error = QString("cannot read archive: %1").arg(archivePath);
+        return false;
+    }
+
+    QString wanted = entryName;
+    wanted.replace('\\', '/');
+    bool found = false;
+    for (const QZipReader::FileInfo &entry : reader.fileInfoList()) {
+        QString path = entry.filePath;
+        path.replace('\\', '/');
+        if (path == wanted) {
+            const QByteArray data = reader.fileData(entry.filePath);
+            if (outBytes) *outBytes = data;
+            found = true;
+            break;
+        }
+    }
+    reader.close();
+    if (!found) {
+        if (error) *error = QString("entry not found: %1").arg(entryName);
+        return false;
+    }
+    return true;
+}
+
+int extractSubdirFromArchive(const QString &archivePath,
+                             const QString &prefix,
+                             const QString &destinationDir,
+                             QString *error)
+{
+    if (error) error->clear();
+
+    if (!QFileInfo::exists(archivePath)) {
+        if (error) *error = QString("archive missing: %1").arg(archivePath);
+        return -1;
+    }
+
+    QString wantPrefix = prefix;
+    wantPrefix.replace('\\', '/');
+    while (wantPrefix.startsWith('/')) wantPrefix.remove(0, 1);
+    if (!wantPrefix.isEmpty() && !wantPrefix.endsWith('/')) wantPrefix += '/';
+
+    QZipReader reader(archivePath);
+    if (!reader.isReadable()) {
+        if (error) *error = QString("cannot read archive: %1").arg(archivePath);
+        return -1;
+    }
+
+    if (!QDir().mkpath(destinationDir)) {
+        if (error) *error = QString("cannot create dir: %1").arg(destinationDir);
+        reader.close();
+        return -1;
+    }
+
+    const QDir baseDir(destinationDir);
+    int extracted = 0;
+    const QList<QZipReader::FileInfo> entries = reader.fileInfoList();
+    for (const QZipReader::FileInfo &entry : entries) {
+        QString rel = entry.filePath;
+        rel.replace('\\', '/');
+        while (rel.startsWith('/')) rel.remove(0, 1);
+        if (rel.isEmpty() || rel.contains("..")) continue;
+        if (!rel.startsWith(wantPrefix)) continue;
+
+        // Strip the prefix; the remainder is the path inside destinationDir.
+        QString sub = rel.mid(wantPrefix.size());
+        if (sub.isEmpty()) continue;
+
+        const QString targetPath = baseDir.filePath(sub);
+        if (entry.isDir) {
+            QDir().mkpath(targetPath);
+            continue;
+        }
+        if (!entry.isFile) continue;
+
+        QDir().mkpath(QFileInfo(targetPath).absolutePath());
+        const QByteArray data = reader.fileData(entry.filePath);
+        QFile out(targetPath);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            if (error) *error = QString("cannot write: %1").arg(targetPath);
+            reader.close();
+            return -1;
+        }
+        const qint64 written = out.write(data);
+        out.close();
+        if (written != data.size()) {
+            if (error) *error = QString("short write: %1").arg(targetPath);
+            reader.close();
+            return -1;
+        }
+        ++extracted;
+    }
+
+    reader.close();
+    return extracted;
+}
+
 } // namespace ZipUtils
+

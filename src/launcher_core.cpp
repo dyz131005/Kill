@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QEventLoop>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -26,6 +27,7 @@
 #include <QSslError>
 #include <QSslSocket>
 #include <QProcess>
+#include <QScopedPointer>
 #include <QProcessEnvironment>
 #include <QRandomGenerator>
 #include <QRegularExpression>
@@ -42,6 +44,7 @@
 #include "download_overlay.h"
 #include "download_task_engine.h"
 #include "zip_utils.h"
+#include "forge_manual_installer.h"
 
 namespace {
 QString osName()
@@ -444,6 +447,19 @@ QString LauncherCore::rewriteUrl(const QString &original) const
     return url;
 }
 
+QString bmclapiToUstcUrl(const QString &original)
+{
+    QString url = original;
+    const QString kUstc = QStringLiteral("https://mirrors.ustc.edu.cn");
+    const QString p1 = QStringLiteral("https://bmclapi2.bangbang93.com/maven/");
+    if (url.startsWith(p1)) return kUstc + "/bmclapi/" + url.mid(p1.size());
+    const QString p2 = QStringLiteral("https://bmclapi.bangbang93.com/maven/");
+    if (url.startsWith(p2)) return kUstc + "/bmclapi/" + url.mid(p2.size());
+    const QString p3 = QStringLiteral("https://download.bangbang93.com/maven/");
+    if (url.startsWith(p3)) return kUstc + "/bmclapi/" + url.mid(p3.size());
+    return QString();
+}
+
 bool LauncherCore::shouldVerify() const
 {
     return m_configStore.config().verifyFiles;
@@ -483,41 +499,87 @@ QByteArray LauncherCore::getBytes(const QUrl &url,
         logTlsEnvironment();
     }
 
-    const QString finalUrl = rewriteUrl(url.toString());
-    log(QString("HTTP GET: %1").arg(finalUrl));
-    QNetworkRequest request{QUrl(finalUrl)};
-    request.setHeader(QNetworkRequest::UserAgentHeader, "KillLauncher/0.1");
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-    for (const auto &header : headers) {
-        request.setRawHeader(header.first.toUtf8(), header.second.toUtf8());
+    QString currentUrl = rewriteUrl(url.toString());
+    log(QString("HTTP GET: %1").arg(currentUrl));
+
+    QUrl finalUrl(currentUrl);
+    QByteArray body;
+    QNetworkReply *reply = nullptr;
+    QNetworkReply::NetworkError netErr = QNetworkReply::NoError;
+    int httpCode = 0;
+    bool timedOut = false;
+
+    // Follow redirects manually. bmclapi2 answers asset GETs with a 302 to a
+    // per-node download host, and that redirect reply can arrive together with
+    // RemoteHostClosedError. With Qt's automatic redirect policy the follow is
+    // then aborted ("HTTP 302: Connection closed"), so re-issue the request
+    // here and keep the mirror-friendly headers on every hop.
+    for (int redirectCount = 0;; ++redirectCount) {
+        QNetworkRequest request{finalUrl};
+        // Use the stock curl User-Agent. The CERNET mirror front-end (which
+        // bmclapi2 redirects to for many artifacts) applies a WAF that whitelists
+        // only the curl UA; browser/launcher/empty UAs get HTTP 403.
+        request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("curl/8.4.0"));
+        // Minimal Accept: CERNET's WAF rejects browser-like Accept headers along
+        // with browser UAs. A plain */* works for both JSON metadata and files.
+        request.setRawHeader("Accept", "*/*");
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+        for (const auto &header : headers) {
+            request.setRawHeader(header.first.toUtf8(), header.second.toUtf8());
+        }
+
+        reply = m_networkManager->get(request);
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        timedOut = false;
+
+        // Mirror front-ends (bmclapi2) often 302 to a per-node host that may be
+        // unreachable from the current network. Waiting the full 120s there
+        // blocks the whole download, so use a shorter deadline for any request
+        // that is already following a redirect. The first request keeps the
+        // longer deadline for slow-but-working hosts.
+        const int attemptTimeoutMs = (redirectCount == 0) ? 120000 : 30000;
+        QObject::connect(&timeoutTimer, &QTimer::timeout, reply, [&timedOut, reply]() {
+            if (reply && reply->isRunning()) {
+                timedOut = true;
+                reply->abort();
+            }
+        });
+        QObject::connect(reply, &QNetworkReply::finished, &timeoutTimer, &QTimer::stop);
+        QObject::connect(reply, &QNetworkReply::downloadProgress, &timeoutTimer, [&timeoutTimer, attemptTimeoutMs](qint64, qint64) {
+            if (timeoutTimer.isActive()) {
+                timeoutTimer.start(attemptTimeoutMs);
+            }
+        });
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        timeoutTimer.start(attemptTimeoutMs);
+        loop.exec();
+
+        body = reply->readAll();
+        netErr = reply->error();
+        httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray location = reply->rawHeader("Location");
+        if (!timedOut && httpCode >= 300 && httpCode < 400 && !location.isEmpty()) {
+            if (redirectCount >= 10) {
+                if (error) *error = QString("重定向次数过多: %1").arg(currentUrl);
+                log(QString("HTTP 请求失败: %1").arg(*error));
+                reply->deleteLater();
+                return {};
+            }
+            const QUrl next = reply->url().resolved(QUrl(QString::fromUtf8(location)));
+            log(QStringLiteral("[net] redirect(%1) %2 -> %3")
+                    .arg(httpCode).arg(reply->url().toString(), next.toString()));
+            reply->deleteLater();
+            reply = nullptr;
+            finalUrl = next;
+            continue;
+        }
+        break;
     }
 
-    QNetworkReply *reply = m_networkManager->get(request);
-    QEventLoop loop;
-    QTimer timeoutTimer;
-    timeoutTimer.setSingleShot(true);
-    bool timedOut = false;
-    QObject::connect(&timeoutTimer, &QTimer::timeout, reply, [&timedOut, reply]() {
-        if (reply && reply->isRunning()) {
-            timedOut = true;
-            reply->abort();
-        }
-    });
-    QObject::connect(reply, &QNetworkReply::finished, &timeoutTimer, &QTimer::stop);
-    QObject::connect(reply, &QNetworkReply::downloadProgress, &timeoutTimer, [&timeoutTimer](qint64, qint64) {
-        if (timeoutTimer.isActive()) {
-            timeoutTimer.start(120000);
-        }
-    });
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    timeoutTimer.start(120000);
-    loop.exec();
-
-    const QByteArray body = reply->readAll();
-    const auto netErr = reply->error();
     if (netErr != QNetworkReply::NoError) {
         QString errMsg;
-        const int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
         log(QStringLiteral("HTTP 诊断: url=%1").arg(url.toString()));
         log(QStringLiteral("HTTP 诊断: error=%1 (%2)").arg(static_cast<int>(netErr)).arg(reply->errorString()));
@@ -560,6 +622,42 @@ QByteArray LauncherCore::getBytes(const QUrl &url,
     return body;
 }
 
+QByteArray LauncherCore::getBytesWithFallbacks(const QUrl &url,
+                                               QString *error,
+                                               const QList<QUrl> &fallbackUrls,
+                                               const QList<QPair<QString, QString>> &headers)
+{
+    QStringList candidates;
+    candidates.append(url.toString());
+    for (const QUrl &u : fallbackUrls) {
+        if (u.isValid() && !u.toString().isEmpty()) {
+            candidates.append(u.toString());
+        }
+    }
+
+    QString lastError;
+    for (int i = 0; i < candidates.size(); ++i) {
+        QString err;
+        const QByteArray bytes = getBytes(QUrl(candidates.at(i)), &err, headers);
+        if (err.isEmpty() && !bytes.isEmpty()) {
+            if (error) error->clear();
+            if (i > 0) {
+                log(QStringLiteral("[net] fallback %1/%2 成功: %3")
+                        .arg(i).arg(candidates.size() - 1).arg(candidates.at(i)));
+            }
+            return bytes;
+        }
+        lastError = err.isEmpty() ? QStringLiteral("空响应") : err;
+        if (i + 1 < candidates.size()) {
+            log(QStringLiteral("[net] 主地址失败，尝试备用 %1: %2 (原因: %3)")
+                    .arg(i + 1).arg(candidates.at(i + 1), lastError));
+        }
+    }
+
+    if (error) *error = lastError.isEmpty() ? QStringLiteral("所有下载地址均失败") : lastError;
+    return {};
+}
+
 bool LauncherCore::downloadToFile(const QUrl &url,
                                   const QString &filePath,
                                   QString *error,
@@ -581,7 +679,28 @@ bool LauncherCore::downloadToFile(const QUrl &url,
     }
 
     log(QString("开始下载文件: %1 <- %2").arg(nativePath, rewriteUrl(url.toString())));
-    const QByteArray bytes = getBytes(url, error, headers);
+
+    // Build a fallback chain for well-known mirror URLs so a flaky mirror
+    // node (e.g. bmclapi2 redirecting to an unreachable 3rd-party host)
+    // does not abort the download.
+    QList<QUrl> fallbacks;
+    const QString u = url.toString();
+    const QString assetsPfx = QStringLiteral("https://bmclapi2.bangbang93.com/assets/");
+    if (u.startsWith(assetsPfx)) {
+        const QString rel = u.mid(assetsPfx.size());  // "xx/hash"
+        fallbacks.append(QUrl(QStringLiteral("https://mirrors.ustc.edu.cn/bmclapi/assets/") + rel));
+        fallbacks.append(QUrl(QStringLiteral("https://resources.download.minecraft.net/") + rel));
+    }
+    const QString officialAssetsPfx = QStringLiteral("https://resources.download.minecraft.net/");
+    if (u.startsWith(officialAssetsPfx) && shouldUseMirrorForMode(m_configStore.config().mirrorMode)) {
+        const QString rel = u.mid(officialAssetsPfx.size());
+        fallbacks.append(QUrl(QStringLiteral("https://mirrors.ustc.edu.cn/bmclapi/assets/") + rel));
+        fallbacks.append(QUrl(QStringLiteral("https://bmclapi2.bangbang93.com/assets/") + rel));
+    }
+
+    const QByteArray bytes = fallbacks.isEmpty()
+        ? getBytes(url, error, headers)
+        : getBytesWithFallbacks(url, error, fallbacks, headers);
     if (!error->isEmpty()) {
         log(QString("下载失败: %1 -> %2").arg(nativePath, *error));
         return false;
@@ -912,11 +1031,25 @@ QStringList LauncherCore::listInstalledVersions() const
 {
     QStringList result;
     const QDir root(versionsRoot());
-    for (const QFileInfo &entry : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+    const QFileInfoList dirs = root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    QStringList allIds;
+    for (const QFileInfo &entry : dirs) {
         const QString jsonFile = entry.absoluteFilePath() + "/" + entry.fileName() + ".json";
         if (QFileInfo::exists(jsonFile)) {
-            result.append(entry.fileName());
+            allIds.append(entry.fileName());
         }
+    }
+    // Hide "child" versions (e.g. loader profiles like neoforge-21.1.1 that
+    // inherit 1.21.1). They belong to a base version and must not appear as
+    // standalone top-level entries.
+    for (const QString &id : allIds) {
+        QString err;
+        const QJsonObject json = loadVersionJson(id, false, &err);
+        const QString parent = json.value("inheritsFrom").toString();
+        if (!parent.isEmpty() && parent != id && allIds.contains(parent, Qt::CaseInsensitive)) {
+            continue;
+        }
+        result.append(id);
     }
     result.sort(Qt::CaseInsensitive);
     return result;
@@ -2597,6 +2730,14 @@ bool LauncherCore::installVanillaVersionWithDialog(const QString &versionId, QSt
                 : QString("https://resources.download.minecraft.net/%1/%2").arg(prefix, hash);
 
             DownloadTaskSpec t2;
+            // Fallback chain so a flaky mirror (e.g. bmclapi2 dropping the TLS
+            // connection mid-transfer) does not abort the whole install.
+            const QString officialAsset =
+                QString("https://resources.download.minecraft.net/%1/%2").arg(prefix, hash);
+            const QString ustcAsset =
+                QString("https://mirrors.ustc.edu.cn/bmclapi/assets/%1/%2").arg(prefix, hash);
+            if (url != officialAsset) t2.fallbackUrls.append(QUrl(officialAsset));
+            t2.fallbackUrls.append(QUrl(ustcAsset));
             t2.url = QUrl(url);
             t2.filePath = filePath;
             t2.sha1 = hash;
@@ -3095,9 +3236,18 @@ QString LauncherCore::locateBundledJava(const QString &versionId) const
         }
     }
 
+    int wantedMajor = 0;
+    {
+        const QRegularExpression re(QStringLiteral("(\\d+)"));
+        const auto m = re.match(versionId);
+        if (m.hasMatch()) wantedMajor = m.captured(1).toInt();
+    }
     QDirIterator it(runtimeRoot, QStringList() << javaExecutableName(), QDir::Files, QDirIterator::Subdirectories);
-    if (it.hasNext()) {
-        return QDir::toNativeSeparators(it.next());
+    while (it.hasNext()) {
+        const QString cand = it.next();
+        if (wantedMajor <= 0) return QDir::toNativeSeparators(cand);
+        if (detectJavaMajorFromPath(cand) == wantedMajor)
+            return QDir::toNativeSeparators(cand);
     }
     return {};
 }
@@ -3203,7 +3353,7 @@ bool LauncherCore::ensureJavaAvailable(int requiredMajor, QString *resolvedPath,
     const QString configured = QDir::fromNativeSeparators(m_configStore.config().javaPath);
     if (!configured.isEmpty() && QFileInfo::exists(configured)) {
         const int detected = detectJavaMajorFromPath(configured);
-        if (detected == requiredMajor) {
+        if (detected >= requiredMajor) {
             *resolvedPath = QDir::toNativeSeparators(configured);
             log(QString("使用已配置 Java %1: %2").arg(requiredMajor).arg(*resolvedPath));
             return true;
@@ -3227,7 +3377,7 @@ bool LauncherCore::ensureJavaAvailable(int requiredMajor, QString *resolvedPath,
 
     for (const QString &candidate : discoverJavaExecutables()) {
         const int detected = detectJavaMajorFromPath(candidate);
-        if (detected == requiredMajor) {
+        if (detected >= requiredMajor) {
             *resolvedPath = candidate;
             log(QString("探测到可用 JRE %1: %2").arg(requiredMajor).arg(QDir::toNativeSeparators(candidate)));
             return true;
@@ -3573,7 +3723,15 @@ QStringList LauncherCore::buildClasspath(const VersionInstallContext &ctx) const
         }
     }
     classpath << QDir::toNativeSeparators(ctx.versionDir + "/" + ctx.versionId + ".jar");
-    return classpath;
+    QStringList deduped;
+    QSet<QString> seenPaths;
+    for (const QString &p : classpath) {
+        const QString key = p.toLower();
+        if (seenPaths.contains(key)) continue;
+        seenPaths.insert(key);
+        deduped.append(p);
+    }
+    return deduped;
 }
 
 QStringList LauncherCore::buildModulePath(const VersionInstallContext &ctx) const
@@ -4016,16 +4174,12 @@ bool LauncherCore::resolveInheritance(QJsonObject &versionJson, QString *error) 
         auto mergeArgArray = [&](const QString &key) {
             if (!childArgs.contains(key)) return;
             QJsonArray mergedArr;
-            QSet<QString> seenStr;
+            
             auto pushArr = [&](const QJsonArray &arr) {
                 for (const QJsonValue &entry : arr) {
-                    if (entry.isString()) {
-                        const QString s = entry.toString();
-                        if (!s.isEmpty()) {
-                            if (seenStr.contains(s)) continue;
-                            seenStr.insert(s);
-                        }
-                    }
+                    // Do not de-duplicate argument strings: flags like --add-opens /
+                    // --add-exports repeat legitimately, and dropping a repeated
+                    // flag turns its value into a stray token (JVM main class).
                     mergedArr.append(entry);
                 }
             };
@@ -4542,6 +4696,17 @@ bool LauncherCore::launchSelectedVersion(QString *error)
                  activeLoaderJson.isEmpty() ? QString() : QString(" (%1)").arg(activeLoaderJson)));
     log(QString("Java: %1").arg(javaPath));
     log(QString("账户: %1").arg(account.displayName()));
+    {
+        QFile dbg(QDir::toNativeSeparators(appDataRoot() + "/last_launch_args.txt"));
+        if (dbg.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            dbg.write(QString("java: %1\n").arg(javaPath).toUtf8());
+            dbg.write(QString("argc: %1\n").arg(args.size()).toUtf8());
+            for (int ai = 0; ai < args.size(); ++ai) {
+                dbg.write(QString("[%1] %2\n").arg(ai).arg(args.at(ai)).toUtf8());
+            }
+            dbg.close();
+        }
+    }
     if (!startTrackedMinecraftProcess(javaPath, args, ctx.instanceDir, config.selectedVersion, profile.softwareOpenGL == 1, error)) {
         return false;
     }
@@ -4787,6 +4952,17 @@ bool LauncherCore::launchSelectedVersionWithDialog(QString *error, QWidget *pare
                  activeLoaderJson.isEmpty() ? QString() : QString(" (%1)").arg(activeLoaderJson)));
     log(QString("Java: %1").arg(javaPath));
     log(QString("账户: %1").arg(account.displayName()));
+    {
+        QFile dbg(QDir::toNativeSeparators(appDataRoot() + "/last_launch_args.txt"));
+        if (dbg.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            dbg.write(QString("java: %1\n").arg(javaPath).toUtf8());
+            dbg.write(QString("argc: %1\n").arg(args.size()).toUtf8());
+            for (int ai = 0; ai < args.size(); ++ai) {
+                dbg.write(QString("[%1] %2\n").arg(ai).arg(args.at(ai)).toUtf8());
+            }
+            dbg.close();
+        }
+    }
     if (!startTrackedMinecraftProcess(javaPath, args, ctx.instanceDir, config.selectedVersion, profile.softwareOpenGL == 1, error)) {
         return false;
     }
@@ -4997,6 +5173,109 @@ QJsonArray LauncherCore::fetchLoaderVersions(const QString &gameVersion, const Q
     return {};
 }
 
+void LauncherCore::prefetchMojangClientMappings(const QString &installerJar, const QString &mcDir)
+{
+    // Extract install_profile.json to learn the NeoForge client version id.
+    QByteArray profileBytes;
+    QString zipErr;
+    if (!ZipUtils::readFileFromArchive(installerJar, QStringLiteral("install_profile.json"),
+                                       &profileBytes, &zipErr)) {
+        log(QString("[mojmaps] 无法读取 install_profile.json: %1").arg(zipErr));
+        return;
+    }
+    const QJsonObject profile = QJsonDocument::fromJson(profileBytes).object();
+    if (profile.isEmpty()) {
+        log(QStringLiteral("[mojmaps] install_profile.json 解析失败"));
+        return;
+    }
+
+    // MCP_VERSION holds the client version id, e.g. "1.21.1-20240808.144430".
+    QString clientVersion;
+    const QJsonObject data = profile.value("data").toObject();
+    const QJsonValue mcpVal = data.value("MCP_VERSION");
+    if (mcpVal.isObject()) {
+        clientVersion = mcpVal.toObject().value("client").toString();
+    }
+    // The install_profile stores literals as 'value' (with literal single
+    // quotes), e.g. '1.21.1-20240808.144430'. Strip them or the derived path
+    // contains quote characters and the prefetch writes to a bogus location.
+    if (clientVersion.size() >= 2 && clientVersion.startsWith('\'') && clientVersion.endsWith('\''))
+        clientVersion = clientVersion.mid(1, clientVersion.size() - 2);
+    if (clientVersion.isEmpty()) {
+        // Fallback: derive from MC_SLIM like [net.minecraft:client:<ver>:slim].
+        const QString slim = data.value("MC_SLIM").toObject().value("client").toString();
+        const QRegularExpression re(QStringLiteral("client:([^:\\]]+)"));
+        const auto m = re.match(slim);
+        if (m.hasMatch()) clientVersion = m.captured(1);
+    }
+    if (clientVersion.isEmpty()) {
+        log(QStringLiteral("[mojmaps] 未能确定 client 版本号，跳过"));
+        return;
+    }
+
+    const QString mappingsPath = mcDir +
+        QStringLiteral("/libraries/net/minecraft/client/%1/client-%1-mappings.txt").arg(clientVersion);
+    if (QFileInfo::exists(mappingsPath) && QFileInfo(mappingsPath).size() > 1024) {
+        log(QStringLiteral("[mojmaps] 已存在，跳过: %1").arg(mappingsPath));
+        return;
+    }
+
+    // Need the game version to query BMCLAPI's version json for client_mappings.
+    // It equals the prefix before the date, e.g. 1.21.1.
+    QString gameVersionForMeta = profile.value("minecraft").toString();
+    if (gameVersionForMeta.isEmpty()) {
+        gameVersionForMeta = clientVersion.section('-', 0, 0);
+    }
+
+    QString mappingsUrl;
+    // Fetch the vanilla version json via DownloadManager (robust redirect + 120s
+    // idle timeout). getJson() could hang on the BMCLAPI 302 redirect chain.
+    const QString verJsonTmp = QDir(QDir::tempPath()).filePath(
+        QStringLiteral("kill-verjson-%1.json").arg(gameVersionForMeta));
+    {
+        DownloadManager vmgr(m_networkManager, this);
+        QString ve;
+        const QUrl vurl(QStringLiteral("https://bmclapi2.bangbang93.com/version/%1/json").arg(gameVersionForMeta));
+        if (!vmgr.downloadFile(vurl, verJsonTmp, "版本元数据", QString(), &ve, nullptr)) {
+            log(QStringLiteral("[mojmaps] 获取版本元数据失败: %1").arg(ve));
+            return;
+        }
+    }
+    QJsonObject verObj;
+    {
+        QFile vf(verJsonTmp);
+        if (vf.open(QIODevice::ReadOnly)) {
+            verObj = QJsonDocument::fromJson(vf.readAll()).object();
+            vf.close();
+        }
+        QFile::remove(verJsonTmp);
+    }
+    const QString cmUrl = verObj.value("downloads").toObject()
+                              .value("client_mappings").toObject().value("url").toString();
+    if (!cmUrl.isEmpty()) {
+        mappingsUrl = rewriteUrl(cmUrl);
+        if (mappingsUrl == cmUrl) {
+            // Force BMCLAPI for mojang piston-data.
+            mappingsUrl.replace("https://piston-data.mojang.com", "https://bmclapi2.bangbang93.com");
+        }
+    }
+    if (mappingsUrl.isEmpty()) {
+        log(QStringLiteral("[mojmaps] 版本元数据中没有 client_mappings 链接"));
+        return;
+    }
+
+    ensureDirectory(QFileInfo(mappingsPath).absolutePath(), nullptr);
+    QString dlErr;
+    DownloadManager mgr(m_networkManager, this);
+    log(QStringLiteral("[mojmaps] 从镜像预取 client_mappings: %1").arg(mappingsUrl));
+    if (!mgr.downloadFile(QUrl(mappingsUrl), mappingsPath, "下载 Mojang 映射",
+                          "正在预取客户端映射(client_mappings)", &dlErr, nullptr)) {
+        log(QStringLiteral("[mojmaps] 预取失败: %1").arg(dlErr));
+        return;
+    }
+    log(QStringLiteral("[mojmaps] 预取完成: %1").arg(mappingsPath));
+}
+
 bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QString &loaderType, const QString &loaderVersion, QString *error, QWidget *parentWidget)
 {
     log(QString("开始安装加载器: %1 %2 (游戏版本: %3)").arg(loaderType, loaderVersion, gameVersion));
@@ -5071,12 +5350,49 @@ bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QSt
         const QString installerPath = tempDir + "/" + installerName;
         
         DownloadManager manager(m_networkManager, this);
-        if (!manager.downloadFile(QUrl(rewriteUrl(installerUrl)),
+        // Prefer the direct USTC mirror: bmclapi redirects through CERNET which
+        // 403s browser-like requests, while USTC serves the file directly when
+        // the browser-like Accept + same-origin Referer are sent (DownloadManager
+        // sends both). This is the path verified to actually return the jar.
+        // Build the bmclapi URL EXPLICITLY (do not depend on rewriteUrl, which
+        // only rewrites when mirror mode is enabled; on some machines the mode
+        // is "off" and the official blocked URL would be used as-is).
+        QString bmclapiUrl;
+        if (installerUrl.startsWith("https://maven.neoforged.net/"))
+            bmclapiUrl = "https://bmclapi2.bangbang93.com/maven/" + installerUrl.mid(QStringLiteral("https://maven.neoforged.net/").size());
+        else if (installerUrl.startsWith("https://maven.minecraftforge.net/"))
+            bmclapiUrl = "https://bmclapi2.bangbang93.com/maven/" + installerUrl.mid(QStringLiteral("https://maven.minecraftforge.net/").size());
+        else
+            bmclapiUrl = rewriteUrl(installerUrl);
+        // Use bmclapi2 directly: its CERNET front-end serves files with plain
+        // headers (proven by HMCL and by curl); browser-like headers get 403.
+        QString mirrorInstallerUrl = bmclapiUrl;
+        log(QString("[安装器] 官方=%1 镜像=%2").arg(installerUrl, mirrorInstallerUrl));
+        // Try the CN mirror (USTC/bmclapi) FIRST: the official NeoForge/Forge
+        // maven is blocked on many networks (hangs until timeout), so reaching
+        // for the mirror first avoids a long stall before success.
+        bool installerOk = false;
+        if (!mirrorInstallerUrl.isEmpty() && mirrorInstallerUrl != installerUrl) {
+            installerOk = manager.downloadFile(QUrl(mirrorInstallerUrl),
+                                  installerPath,
+                                  "下载加载器安装程序",
+                                  QString("正在下载(镜像): %1").arg(installerName),
+                                  error,
+                                  parentWidget);
+        }
+        if (!installerOk) {
+            log(QString("镜像源下载失败: %1 | 错误: %2")
+                    .arg(mirrorInstallerUrl, error ? *error : QStringLiteral("(无)")));
+            log(QString("改用官方源: %1").arg(installerUrl));
+            if (error) error->clear();
+            installerOk = manager.downloadFile(QUrl(installerUrl),
                                   installerPath,
                                   "下载加载器安装程序",
                                   QString("正在下载: %1").arg(installerName),
                                   error,
-                                  parentWidget)) {
+                                  parentWidget);
+        }
+        if (!installerOk) {
             if (error) {
                 log(QString("加载器安装程序下载失败: %1").arg(*error));
             }
@@ -5084,11 +5400,75 @@ bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QSt
         }
         
         QString javaPath;
-        if (!ensureJavaAvailable(17, &javaPath, error)) {
+        int installerJavaMajor = requiredJavaMajor(loadVersionJson(gameVersion, false, nullptr));
+        if (installerJavaMajor < 17) installerJavaMajor = 17;
+        if (!ensureJavaAvailable(installerJavaMajor, &javaPath, error)) {
             return false;
         }
         
         const QString mcDir = QDir::fromNativeSeparators(m_configStore.config().minecraftDir);
+
+        // Pre-place the vanilla Mojang client mappings from BMCLAPI if missing.
+        // The NeoForge/Forge installer's DownloadMojmaps processor fetches
+        // client.txt from piston-data.mojang.com, which on blocked networks
+        // resets the TLS handshake and fails the install. If the mappings file
+        // already exists, the processor skips the download.
+        prefetchMojangClientMappings(installerPath, mcDir);
+
+        // === HMCL-style MANUAL install (no installer --installClient flow) ===
+        // Parse install_profile.json, download every library/artifact via the
+        // mirror, and run the processors locally. This avoids the blocked
+        // maven.neoforged.net entirely.
+        {
+            log(QStringLiteral("[手动安装] 开始解析 install_profile 并手动安装..."));
+            ForgeManual::Options mo;
+            mo.gameVersion = gameVersion;
+            mo.loaderType = loaderType;
+            mo.loaderVersion = loaderVersion;
+            mo.installerJar = installerPath;
+            mo.mcDir = mcDir;
+            mo.javaPath = javaPath;
+            mo.libraryDirectory = librariesRoot();
+            mo.net = m_networkManager;
+            mo.log = [this](const QString &s) { log(s); };
+            mo.download = [this](const QString &url, const QString &dest, const QString &sha1) -> bool {
+                QString mapped = url;
+                // Explicitly map official maven hosts to the CN mirror, independent
+                // of mirror-mode config (which may be off).
+                const QString kMirrorMaven = QStringLiteral("https://bmclapi2.bangbang93.com/maven/");
+                if (url.startsWith("https://maven.neoforged.net/")) {
+                    QString rel = url.mid(QStringLiteral("https://maven.neoforged.net/").size());
+                    if (rel.startsWith("releases/")) rel = rel.mid(QStringLiteral("releases/").size());
+                    mapped = kMirrorMaven + rel;
+                } else if (url.startsWith("https://maven.minecraftforge.net/")) {
+                    QString rel = url.mid(QStringLiteral("https://maven.minecraftforge.net/").size());
+                    if (rel.startsWith("maven/")) rel = rel.mid(QStringLiteral("maven/").size());
+                    mapped = kMirrorMaven + rel;
+                } else if (url.startsWith("https://libraries.minecraft.net/")) {
+                    QString rel = url.mid(QStringLiteral("https://libraries.minecraft.net/").size());
+                    mapped = kMirrorMaven + rel;
+                } else {
+                    mapped = rewriteUrl(url);
+                }
+                // Use bmclapi2 directly (its CERNET front-end serves files with
+                // plain headers; USTC/CERNET reject the browser-like ones).
+                DownloadManager dm(m_networkManager, this);
+                dm.setDebugLog([this](const QString &s) { log(s); });
+                QString e;
+                if (dm.downloadFile(QUrl(mapped), dest, QStringLiteral("下载依赖"), QString(), &e, nullptr, sha1)) return true;
+                if (mapped != url) { e.clear(); if (dm.downloadFile(QUrl(url), dest, QStringLiteral("下载依赖"), QString(), &e, nullptr, sha1)) return true; }
+                log(QStringLiteral("[手动安装] 下载失败: %1 | 错误: %2").arg(url, e));
+                return false;
+            };
+            const ForgeManual::Result mr = ForgeManual::install(mo);
+            if (mr.ok) {
+                saveVersionProfile(gameVersion, baseProfile, nullptr);
+                if (!setVersionSelectedLoader(gameVersion, loaderType, mr.versionJsonName, error)) return false;
+                log(QStringLiteral("[手动安装] 加载器已就绪，激活配置: %1").arg(mr.versionJsonName));
+                return true;
+            }
+            log(QStringLiteral("[手动安装] 失败，回退到运行安装程序: %1").arg(mr.error));
+        }
         const QString profilesPath = mcDir + "/launcher_profiles.json";
         if (!QFileInfo::exists(profilesPath)) {
             ensureDirectory(mcDir, error);
@@ -5102,18 +5482,58 @@ bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QSt
         
         log(QString("运行加载器安装程序: %1").arg(installerPath));
         
-        DownloadProgressDialog dialog("安装加载器", "正在运行安装程序，请稍候...", parentWidget);
-        dialog.setOverallBusy(true);
-        dialog.setBusy(true);
-        dialog.show();
+        QScopedPointer<DownloadProgressDialog> dialogHolder;
+        DownloadProgressDialog *dialogPtr = nullptr;
+        if (parentWidget) {
+            // In-window overlay (HMCL style) instead of a separate window.
+            dialogHolder.reset(new DownloadProgressDialog(parentWidget, "安装加载器",
+                                                          "正在运行安装程序，请稍候..."));
+            dialogPtr = dialogHolder.data();
+            dialogPtr->showOverallProgress(true);
+            dialogPtr->setStepLabel(QString("%1 %2").arg(loaderType, loaderVersion));
+        } else {
+            dialogHolder.reset(new DownloadProgressDialog("安装加载器",
+                                                          "正在运行安装程序，请稍候...", nullptr));
+            dialogPtr = dialogHolder.data();
+        }
+        dialogPtr->setOverallBusy(true);
+        dialogPtr->setBusy(true);
+        dialogPtr->show();
+        DownloadProgressDialog &dialog = *dialogPtr;
         
+        QString installJava = javaPath;
+        if (installJava.endsWith("javaw.exe", Qt::CaseInsensitive)) {
+            installJava.chop(9);
+            installJava += "java.exe";
+        }
+        if (!QFileInfo::exists(installJava)) installJava = javaPath;
+
         QProcess process;
-        process.setProgram(javaPath);
+        process.setProcessChannelMode(QProcess::MergedChannels);
+        process.setProgram(installJava);
         QStringList installerArgs;
         installerArgs << "-jar" << installerPath << "--installClient" << QDir::toNativeSeparators(mcDir);
         process.setArguments(installerArgs);
         process.setWorkingDirectory(tempDir);
+
+        QStringList installerOutput;
+        QObject::connect(&process, &QProcess::readyRead, [&]() {
+            const QByteArray chunk = process.readAll();
+            if (chunk.isEmpty()) return;
+            for (const QString &ln : QString::fromLocal8Bit(chunk).split('\n', Qt::SkipEmptyParts)) {
+                const QString t = ln.trimmed();
+                if (t.isEmpty()) continue;
+                installerOutput.append(t);
+                if (installerOutput.size() > 400) installerOutput.removeFirst();
+            }
+        });
+
         process.start();
+        if (!process.waitForStarted(15000)) {
+            *error = QString("无法启动安装程序: %1").arg(process.errorString());
+            log(*error);
+            return false;
+        }
         
         bool cancelled = false;
         QObject::connect(&dialog, &DownloadProgressDialog::cancelled, [&]() {
@@ -5121,16 +5541,53 @@ bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QSt
             process.kill();
         });
         
+        QElapsedTimer installTimer;
+        installTimer.start();
+        constexpr qint64 kInstallTimeoutMs = 5 * 60 * 1000;
+
         while (process.state() == QProcess::Running) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             if (cancelled || dialog.isCancelled()) {
+                process.kill();
+                process.waitForFinished(2000);
                 if (error) *error = "操作已取消";
                 return false;
             }
+            if (installTimer.elapsed() > kInstallTimeoutMs) {
+                process.kill();
+                process.waitForFinished(2000);
+                *error = QString("安装程序超时（超过5分钟无结果）。最近输出:\n%1")
+                             .arg(installerOutput.mid(qMax(0, installerOutput.size() - 15)).join('\n'));
+                log(*error);
+                return false;
+            }
         }
-        
+        {
+            const QByteArray tail = process.readAll();
+            if (!tail.isEmpty()) {
+                for (const QString &ln : QString::fromLocal8Bit(tail).split('\n', Qt::SkipEmptyParts))
+                    if (!ln.trimmed().isEmpty()) installerOutput.append(ln.trimmed());
+            }
+        }
         if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-            *error = QString("安装程序运行失败: %1").arg(QString::fromLocal8Bit(process.readAllStandardError()));
+            const QString tail = installerOutput.mid(qMax(0, installerOutput.size() - 25)).join('\n');
+            QString hint;
+            // Detect the classic GFW symptom: the installer itself cannot reach
+            // maven.neoforged.net to fetch neoform/mappings artifacts.
+            const QString whole = installerOutput.join('\n');
+            if (whole.contains("maven.neoforged.net") &&
+                (whole.contains("Connect timed out") || whole.contains("SocketTimeoutException") ||
+                 whole.contains("UnknownHost") || whole.contains("Connection refused"))) {
+                hint = QStringLiteral(
+                    "\n\n诊断: 安装器需要从 maven.neoforged.net 下载 neoform/mappings 等文件，"
+                    "但该域名在当前网络下不可达（连接超时）。这些文件不在任何可用的国内镜像上，"
+                    "因此无法离线安装。建议：开启代理/VPN 让 maven.neoforged.net 可达后重试，"
+                    "或改用 Fabric/Quilt 加载器。");
+            }
+            *error = QString("安装程序运行失败 (exit=%1):\n%2%3")
+                         .arg(process.exitCode())
+                         .arg(tail.isEmpty() ? QStringLiteral("(无输出)") : tail)
+                         .arg(hint);
             log(*error);
             return false;
         }
@@ -5151,7 +5608,14 @@ bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QSt
         }
 
         if (pickedJson.isEmpty()) {
-            const QStringList versionsAfterInstall = listInstalledVersions();
+            QStringList versionsAfterInstall;
+            {
+                const QDir _vroot(versionsRoot());
+                for (const QFileInfo &_e : _vroot.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+                    if (QFileInfo::exists(_e.absoluteFilePath() + "/" + _e.fileName() + ".json"))
+                        versionsAfterInstall.append(_e.fileName());
+                }
+            }
             for (const QString &candidate : versionsAfterInstall) {
                 if (!versionMatchesBase(candidate, gameVersion)) continue;
                 if (candidate.compare(gameVersion, Qt::CaseInsensitive) == 0) continue;
@@ -5168,6 +5632,7 @@ bool LauncherCore::installLoaderWithDialog(const QString &gameVersion, const QSt
                         }
                     }
                     saveVersionProfile(candidate, baseProfile, nullptr);
+                    { QDir loaderDir(versionsRoot() + "/" + candidate); if (loaderDir.exists()) loaderDir.removeRecursively(); }
                     break;
                 }
             }

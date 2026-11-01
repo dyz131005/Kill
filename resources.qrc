@@ -30,5 +30,6 @@
         <file>assets/version-icons/optifine@2x.png</file>
         <file>assets/version-icons/cleanroom.png</file>
         <file>assets/version-icons/cleanroom@2x.png</file>
+        <file>terracotta/terracotta.exe</file>
     </qresource>
 </RCC>

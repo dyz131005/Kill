@@ -109,6 +109,52 @@ void DownloadTaskEngine::cancel()
     }
 }
 
+bool DownloadTaskEngine::beginRequest(Active *a)
+{
+    if (!a || a->index < 0 || a->index >= m_pending.size()) return false;
+    const DownloadTaskSpec &spec = m_pending.at(a->index);
+
+    QUrl url;
+    if (a->urlIndex == 0) {
+        url = spec.url;
+    } else {
+        const int fb = a->urlIndex - 1;
+        if (fb < 0 || fb >= spec.fallbackUrls.size()) return false;
+        url = spec.fallbackUrls.at(fb);
+    }
+    if (!url.isValid()) return false;
+
+    // Reset per-attempt download counters; bytes already accumulated this
+    // attempt are discarded because the .part file is truncated below.
+    if (a->file) {
+        a->file->close();
+        QFile::remove(a->tempPath);
+        if (!a->file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return false;
+        }
+    }
+    a->received = 0;
+    a->total = 0;
+
+    QNetworkRequest request(url);
+    for (const auto &h : spec.headers) {
+        request.setRawHeader(h.first.toUtf8(), h.second.toUtf8());
+    }
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+
+    QNetworkReply *reply = m_manager->get(request);
+    if (!reply) return false;
+
+    a->reply = reply;
+    m_active.insert(reply, a);
+
+    connect(reply, &QNetworkReply::readyRead, this, &DownloadTaskEngine::onReadyRead);
+    connect(reply, &QNetworkReply::downloadProgress, this, &DownloadTaskEngine::onProgress);
+    connect(reply, &QNetworkReply::finished, this, &DownloadTaskEngine::onFinished);
+    return true;
+}
+
 void DownloadTaskEngine::pump()
 {
     while (!m_cancelled && m_active.size() < m_concurrency && !m_queue.isEmpty()) {
@@ -133,38 +179,30 @@ void DownloadTaskEngine::pump()
             continue;
         }
 
-        QNetworkRequest request(spec.url);
-        for (const auto &h : spec.headers) {
-            request.setRawHeader(h.first.toUtf8(), h.second.toUtf8());
-        }
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                             QNetworkRequest::NoLessSafeRedirectPolicy);
-
-        QNetworkReply *reply = m_manager->get(request);
-        if (!reply) {
-            m_failed = true;
-            m_errorString = QStringLiteral("无法创建网络请求");
-            file->close();
-            file->deleteLater();
-            continue;
-        }
-
         auto *a = new Active;
         a->index = index;
-        a->reply = reply;
         a->file = file;
         a->tempPath = tempPath;
         a->received = 0;
         a->total = 0;
+        a->urlIndex = 0;
 
-        m_active.insert(reply, a);
+        if (!beginRequest(a)) {
+            // No usable URL at all -> fail this task immediately.
+            file->close();
+            file->deleteLater();
+            delete a;
+            m_failed = true;
+            if (m_errorString.isEmpty()) {
+                m_errorString = QString("%1: 无可用下载地址").arg(spec.label);
+            }
+            ++m_completed;
+            emit taskFinished(index, false, QStringLiteral("无可用下载地址"));
+            continue;
+        }
+
         m_taskReceived[index] = 0;
         m_taskTotal[index] = 0;
-
-        connect(reply, &QNetworkReply::readyRead, this, &DownloadTaskEngine::onReadyRead);
-        connect(reply, &QNetworkReply::downloadProgress, this, &DownloadTaskEngine::onProgress);
-        connect(reply, &QNetworkReply::finished, this, &DownloadTaskEngine::onFinished);
-
         emit taskStarted(index);
     }
 
@@ -246,6 +284,66 @@ void DownloadTaskEngine::onFinished()
     if (a->file) {
         if (ok) {
             const QByteArray rest = reply->readAll();
+    // Transport-level failure (connection closed, reset, timeout, HTTP 4xx/5xx...)
+    // -> try the next fallback mirror before giving up. We do NOT retry fallbacks
+    // after a checksum mismatch, since that indicates content, not transport,
+    // is wrong.
+    if (!ok && !m_cancelled && reply->error() != QNetworkReply::OperationCanceledError) {
+        const DownloadTaskSpec &spec = m_pending.at(a->index);
+        const bool hasFallback = (a->urlIndex < spec.fallbackUrls.size());
+        if (hasFallback) {
+            // Drop the current reply/file state but keep the Active record so the
+            // task can be retried against the next URL.
+            Active *retry = new Active;
+            retry->index = a->index;
+            retry->file = a->file;
+            retry->tempPath = a->tempPath;
+            retry->urlIndex = a->urlIndex + 1;
+            retry->received = 0;
+            retry->total = 0;
+
+            if (a->reply) {
+                m_active.remove(a->reply);
+                a->reply->deleteLater();
+                a->reply = nullptr;
+            }
+            if (a->file) {
+                a->file->flush();
+                a->file->close();
+                a->file = nullptr;
+            }
+            // Subtract bytes already counted for this attempt from the overall
+            // progress counter; the retry restarts from zero.
+            m_doneBytes -= a->received;
+            if (m_doneBytes < 0) m_doneBytes = 0;
+            delete a;
+
+            if (beginRequest(retry)) {
+                m_taskReceived[retry->index] = 0;
+                m_taskTotal[retry->index] = 0;
+                emitOverall();
+                return;
+            }
+            // Fallback failed to even start -> clean up and fail the task.
+            if (retry->file) {
+                retry->file->close();
+                retry->file->deleteLater();
+            }
+            QFile::remove(retry->tempPath);
+            const int idx = retry->index;
+            delete retry;
+            ++m_completed;
+            m_failed = true;
+            if (m_errorString.isEmpty()) {
+                m_errorString = QString("%1: %2").arg(m_pending.at(idx).label, err);
+            }
+            emit taskFinished(idx, false, err);
+            emitOverall();
+            pump();
+            return;
+        }
+    }
+
             if (!rest.isEmpty()) {
                 if (a->file->write(rest) != rest.size()) {
                     ok = false;

@@ -2906,9 +2906,33 @@ QWidget *MainWindow::buildAccountsTab()
 QWidget *MainWindow::buildSettingsTab()
 {
     auto *page = new QWidget(this);
-    auto *layout = new QVBoxLayout(page);
+    auto *pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
 
-    auto *baseBox = new QGroupBox("基础配置", page);
+    // 整页可上下滚动：内容超出可视区域时自动出现纵向滚动条。
+    auto *scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setStyleSheet(
+        "QScrollArea { border: none; background: transparent; }"
+        "QScrollBar:vertical {"
+        "  background: transparent; width: 12px; margin: 2px 2px 2px 0;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "  background: #c7cbd1; border-radius: 5px; min-height: 32px;"
+        "}"
+        "QScrollBar::handle:vertical:hover { background: #a8adb5; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }");
+
+    auto *content = new QWidget(scrollArea);
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(16);
+
+    auto *baseBox = new QGroupBox("基础配置", content);
     auto *baseLayout = new QFormLayout(baseBox);
 
     m_minecraftDirEdit = new QLineEdit(baseBox);
@@ -2934,6 +2958,36 @@ QWidget *MainWindow::buildSettingsTab()
     m_minMemorySpin->setRange(512, 65536);
     m_maxMemorySpin->setRange(512, 65536);
     m_curseForgeKeyEdit->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+
+    // 统一放大每个设置项的控件高度，并固定其尺寸（不随窗口缩放而改变）。
+    const int kFieldHeight = 36;
+    const QSizePolicy kFieldPolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto fixField = [&](QWidget *w) {
+        if (!w) return;
+        w->setFixedHeight(kFieldHeight);
+        w->setSizePolicy(kFieldPolicy);
+    };
+    for (QLineEdit *e : { m_minecraftDirEdit, m_javaPathEdit, m_javaArgsEdit,
+                          m_extraGameArgsEdit, m_clientIdEdit, m_curseForgeKeyEdit }) {
+        fixField(e);
+    }
+    for (QSpinBox *s : { m_minMemorySpin, m_maxMemorySpin }) {
+        if (s) { s->setFixedHeight(kFieldHeight); s->setSizePolicy(kFieldPolicy); }
+    }
+    if (m_animationCombo) {
+        m_animationCombo->setFixedHeight(kFieldHeight);
+        m_animationCombo->setSizePolicy(kFieldPolicy);
+    }
+    for (QCheckBox *c : { m_verifyFilesCheck, m_versionIsolationCheck,
+                          m_softwareOpenGLCheck, m_forceMpOnWin7Check }) {
+        if (c) { c->setMinimumHeight(kFieldHeight); c->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed); }
+    }
+    // 分组框随窗口宽度自适应拉伸（仅高度固定），避免窗口拉宽后右侧空一大截。
+    baseBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    // 行内控件布局间距稍微放宽，让放大的框更舒服。
+    baseLayout->setVerticalSpacing(12);
+    baseLayout->setHorizontalSpacing(16);
+    baseLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     auto *mcDirRow = new QWidget(baseBox);
     auto *mcDirLayout = new QHBoxLayout(mcDirRow);
@@ -2981,10 +3035,14 @@ QWidget *MainWindow::buildSettingsTab()
 
     layout->addWidget(baseBox);
 
-    auto *storageBox = new QGroupBox("存储位置（配置 / 插件 / Java）", page);
+    auto *storageBox = new QGroupBox("存储位置（配置 / 插件 / Java）", content);
+    storageBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *storageLayout = new QVBoxLayout(storageBox);
+    storageLayout->setSpacing(10);
 
     m_storageModeCombo = new QComboBox(storageBox);
+    m_storageModeCombo->setFixedHeight(36);
+    m_storageModeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_storageModeCombo->addItem("安装目录下的 .kill（默认）", "install");
     m_storageModeCombo->addItem("AppData（用户数据目录）", "appdata");
     m_storageModeCombo->addItem("自定义目录", "custom");
@@ -2994,7 +3052,10 @@ QWidget *MainWindow::buildSettingsTab()
     auto *storagePathRow = new QHBoxLayout();
     m_storagePathEdit = new QLineEdit(storageBox);
     m_storagePathEdit->setReadOnly(true);
+    m_storagePathEdit->setFixedHeight(36);
+    m_storagePathEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto *storageBrowseBtn = new QPushButton("浏览…", storageBox);
+    storageBrowseBtn->setFixedHeight(36);
     storagePathRow->addWidget(m_storagePathEdit, 1);
     storagePathRow->addWidget(storageBrowseBtn);
     storageLayout->addWidget(new QLabel("当前目录：", storageBox));
@@ -3017,6 +3078,9 @@ QWidget *MainWindow::buildSettingsTab()
 
     layout->addWidget(storageBox);
     layout->addStretch();
+
+    scrollArea->setWidget(content);
+    pageLayout->addWidget(scrollArea);
 
     connect(m_storageModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
         if (!m_storageModeCombo || !m_storagePathEdit) return;
@@ -3245,7 +3309,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("2.0", infoBox);
+    auto *versionLabel = new QLabel("2.1", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -6895,29 +6959,66 @@ QWidget *MainWindow::buildInstallLoaderTab()
 {
     auto *page = new QWidget(this);
     auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(24, 20, 24, 20);
+    layout->setSpacing(16);
+
+    auto *titleLabel = new QLabel("安装加载器", page);
+    titleLabel->setStyleSheet("font-size: 20px; font-weight: 800; color: #111827;");
+    layout->addWidget(titleLabel);
+    auto *subtitleLabel = new QLabel("选择游戏版本与加载器类型，获取对应版本后一键安装。安装进度会在本窗口内显示。", page);
+    subtitleLabel->setWordWrap(true);
+    subtitleLabel->setStyleSheet("font-size: 13px; color: #6b7280;");
+    layout->addWidget(subtitleLabel);
 
     auto *filterBox = new QGroupBox("加载器选项", page);
+    filterBox->setStyleSheet(
+        "QGroupBox { border: 1px solid #e5e7eb; border-radius: 12px; margin-top: 8px;"
+        "  padding: 16px 16px 12px 16px; background: #ffffff; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 6px;"
+        "  color: #111827; font-weight: 700; }");
     auto *filterLayout = new QHBoxLayout(filterBox);
-    
-    filterLayout->addWidget(new QLabel("游戏版本:"));
+    filterLayout->setSpacing(10);
+
+    auto *gameLabel = new QLabel("游戏版本", filterBox);
+    gameLabel->setStyleSheet("color: #374151; font-weight: 600;");
+    filterLayout->addWidget(gameLabel);
     m_loaderGameVersionCombo = new QComboBox(filterBox);
     m_loaderGameVersionCombo->setEditable(true);
+    m_loaderGameVersionCombo->setFixedHeight(36);
+    m_loaderGameVersionCombo->setMinimumWidth(140);
     filterLayout->addWidget(m_loaderGameVersionCombo);
-    
-    filterLayout->addWidget(new QLabel("加载器类型:"));
+
+    auto *typeLabel = new QLabel("加载器类型", filterBox);
+    typeLabel->setStyleSheet("color: #374151; font-weight: 600;");
+    filterLayout->addWidget(typeLabel);
     m_loaderTypeCombo = new QComboBox(filterBox);
     m_loaderTypeCombo->addItems({"fabric", "forge", "neoforge", "quilt"});
+    m_loaderTypeCombo->setFixedHeight(36);
+    m_loaderTypeCombo->setMinimumWidth(120);
     filterLayout->addWidget(m_loaderTypeCombo);
-    
+    filterLayout->addStretch();
+
     m_refreshLoadersButton = new QPushButton("获取版本", filterBox);
+    m_refreshLoadersButton->setCursor(Qt::PointingHandCursor);
+    m_refreshLoadersButton->setFixedHeight(36);
     filterLayout->addWidget(m_refreshLoadersButton);
-    
+
     m_installLoaderButton = new QPushButton("安装选中加载器", filterBox);
+    m_installLoaderButton->setCursor(Qt::PointingHandCursor);
+    m_installLoaderButton->setFixedHeight(36);
     filterLayout->addWidget(m_installLoaderButton);
     
     layout->addWidget(filterBox);
 
-    m_loaderVersionsTable = new QTableWidget(page);
+    auto *versionsBox = new QGroupBox("可用版本", page);
+    versionsBox->setStyleSheet(
+        "QGroupBox { border: 1px solid #e5e7eb; border-radius: 12px; margin-top: 8px;"
+        "  padding: 12px; background: #ffffff; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 6px;"
+        "  color: #111827; font-weight: 700; }");
+    auto *versionsLayout = new QVBoxLayout(versionsBox);
+
+    m_loaderVersionsTable = new QTableWidget(versionsBox);
     m_loaderVersionsTable->setColumnCount(2);
     m_loaderVersionsTable->setHorizontalHeaderLabels({"加载器版本", "支持的游戏版本"});
     m_loaderVersionsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -6925,14 +7026,21 @@ QWidget *MainWindow::buildInstallLoaderTab()
     m_loaderVersionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_loaderVersionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_loaderVersionsTable->setAlternatingRowColors(true);
-    
-    layout->addWidget(m_loaderVersionsTable, 1);
+    m_loaderVersionsTable->setShowGrid(false);
+    m_loaderVersionsTable->verticalHeader()->setVisible(false);
+    versionsLayout->addWidget(m_loaderVersionsTable);
+    layout->addWidget(versionsBox, 1);
 
     connect(m_refreshLoadersButton, &QPushButton::clicked, this, [this]() {
         refreshLoaderVersions();
     });
     
     connect(m_installLoaderButton, &QPushButton::clicked, this, [this] {
+        installSelectedLoader();
+    });
+
+    // 双击某一行直接安装该加载器版本
+    connect(m_loaderVersionsTable, &QTableWidget::cellDoubleClicked, this, [this](int, int) {
         installSelectedLoader();
     });
 

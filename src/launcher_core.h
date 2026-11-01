@@ -178,6 +178,10 @@ private:
     QString mirrorDataBase() const;
     QString rewriteUrl(const QString &original) const;
     bool shouldVerify() const;
+    // For Forge/NeoForge installs: ensure the vanilla Mojang client mappings
+    // (client.txt) exist under .minecraft/libraries so the installer's
+    // DownloadMojmaps processor does not hit the blocked Mojang host.
+    void prefetchMojangClientMappings(const QString &installerJar, const QString &mcDir);
 
     int detectJavaMajorFromPath(const QString &javaPath) const;
     int mapMinecraftVersionToJavaMajor(const QString &versionId) const;
@@ -190,6 +194,13 @@ private:
 
     QJsonDocument getJson(const QUrl &url, QString *error);
     QByteArray getBytes(const QUrl &url, QString *error, const QList<QPair<QString, QString>> &headers = {});
+    // Same as getBytes, but if the primary `url` fails (connection closed,
+    // timeout, HTTP error) each of `fallbackUrls` is tried in order. A
+    // non-empty body from any candidate wins.
+    QByteArray getBytesWithFallbacks(const QUrl &url,
+                                     QString *error,
+                                     const QList<QUrl> &fallbackUrls,
+                                     const QList<QPair<QString, QString>> &headers = {});
     bool downloadToFile(const QUrl &url,
                         const QString &filePath,
                         QString *error,

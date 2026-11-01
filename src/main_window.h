@@ -35,6 +35,7 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class QCloseEvent;
 class QShowEvent;
+class TerracottaClient;
 
 class MainWindow : public QMainWindow
 {
@@ -158,6 +159,20 @@ private:
     QWidget *m_multiplayerTab = nullptr;
     int m_multiplayerTabIndex = -1;
     bool m_multiplayerDisabled = false;
+    QStackedWidget *m_mpStack = nullptr;
+    QWidget *m_mpInstallPage = nullptr;
+    QWidget *m_mpMainPage = nullptr;
+    QLabel *m_mpStatusLabel = nullptr;
+    QPushButton *m_mpHostButton = nullptr;
+    QPushButton *m_mpJoinButton = nullptr;
+    QLineEdit *m_mpRoomInput = nullptr;
+    QLabel *m_mpRoomCodeLabel = nullptr;
+    QLabel *m_mpJoinUrlLabel = nullptr;
+    TerracottaClient *m_terracotta = nullptr;
+    QString terracottaDir() const;
+    void refreshMultiplayerInstallState();
+    void installTerracottaCore();
+    void onTerracottaState(const QJsonObject &state);
     QWidget *m_aboutPage = nullptr;
     QPushButton *m_aboutBackButton = nullptr;
     QPushButton *m_aboutEntryButton = nullptr;
