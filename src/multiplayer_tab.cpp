@@ -1,6 +1,7 @@
 // 联机标签页 —— 陶瓦联机（Terracotta）UI + Win7 兼容性守卫。
 #include "main_window.h"
 #include "terracotta_client.h"
+#include "hongshi_client.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -18,6 +19,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QGuiApplication>
+#include <QClipboard>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -74,21 +77,41 @@ QWidget *MainWindow::buildMultiplayerTab()
         "  border: none; border-radius: 8px; font-size: 14px; font-weight: 600; color: #2563eb;"
         "  background-color: rgba(37,99,235,0.10); }");
     navLayout->addWidget(tcBtn);
+    auto *hsBtn = new QPushButton("🧱  红石联机", navWidget);
+    hsBtn->setCheckable(true);
+    hsBtn->setFixedHeight(44);
+    hsBtn->setCursor(Qt::PointingHandCursor);
+    hsBtn->setStyleSheet(
+        "QPushButton { text-align: left; padding-left: 14px; background: transparent;"
+        "  border: none; border-radius: 8px; font-size: 14px; font-weight: 600; color: #374151; }"
+        "QPushButton:hover { background-color: #f3f4f6; }"
+        "QPushButton:checked { color: #2563eb; background-color: rgba(37,99,235,0.10); }");
+    navLayout->addWidget(hsBtn);
     navLayout->addStretch();
 
     // Right content: a stacked widget with install page / main page
     auto *right = new QWidget(page);
     auto *rightLayout = new QVBoxLayout(right);
-    rightLayout->setContentsMargins(24, 20, 24, 20);
-    rightLayout->setSpacing(16);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+
+    // Outer stack: page 0 = Terracotta, page 1 = Hongshi.
+    auto *outerStack = new QStackedWidget(right);
+    m_mpOuterStack = outerStack;
+    rightLayout->addWidget(outerStack, 1);
+
+    auto *tcPage = new QWidget(outerStack);
+    auto *tcPageLayout = new QVBoxLayout(tcPage);
+    tcPageLayout->setContentsMargins(24, 20, 24, 20);
+    tcPageLayout->setSpacing(16);
 
     // Header row: title + refresh
     auto *headerRow = new QHBoxLayout();
-    auto *title = new QLabel("陶瓦联机 (Terracotta)", right);
+    auto *title = new QLabel("陶瓦联机 (Terracotta)", tcPage);
     title->setStyleSheet("font-size: 20px; font-weight: 800; color: #111827;");
     headerRow->addWidget(title);
     headerRow->addStretch();
-    auto *refreshBtn = new QPushButton("刷新", right);
+    auto *refreshBtn = new QPushButton("刷新", tcPage);
     refreshBtn->setCursor(Qt::PointingHandCursor);
     refreshBtn->setFixedHeight(34);
     refreshBtn->setStyleSheet(
@@ -100,11 +123,11 @@ QWidget *MainWindow::buildMultiplayerTab()
         refreshMultiplayerInstallState();
     });
     headerRow->addWidget(refreshBtn);
-    rightLayout->addLayout(headerRow);
+    tcPageLayout->addLayout(headerRow);
+    m_mpStack = new QStackedWidget(tcPage);
+    tcPageLayout->addWidget(m_mpStack, 1);
 
-    m_mpStack = new QStackedWidget(right);
-    rightLayout->addWidget(m_mpStack, 1);
-
+    outerStack->addWidget(tcPage);
     // --- Install page ---
     m_mpInstallPage = new QWidget(m_mpStack);
     auto *instLayout = new QVBoxLayout(m_mpInstallPage);
@@ -289,6 +312,36 @@ QWidget *MainWindow::buildMultiplayerTab()
         }
     });
 
+    // ===== Hongshi (红石联机) page =====
+    QWidget *hsPage = buildHongshiPage(outerStack);
+    outerStack->addWidget(hsPage);
+
+    // Nav switching between the two multiplayer backends.
+    auto applyNavStyle = [](QPushButton *btn, bool active) {
+        btn->setStyleSheet(
+            QStringLiteral("QPushButton { text-align: left; padding-left: 14px; background: transparent;"
+                           "  border: none; border-radius: 8px; font-size: 14px; font-weight: 600;"
+                           "  color: %1; background-color: %2; }")
+                .arg(active ? QStringLiteral("#2563eb") : QStringLiteral("#374151"),
+                     active ? QStringLiteral("rgba(37,99,235,0.10)") : QStringLiteral("transparent")));
+    };
+    connect(tcBtn, &QPushButton::clicked, this, [this, outerStack, tcBtn, hsBtn, applyNavStyle]() {
+        animateButton(tcBtn);
+        animateStackSwitch(outerStack, 0);
+        tcBtn->setChecked(true);
+        hsBtn->setChecked(false);
+        applyNavStyle(tcBtn, true);
+        applyNavStyle(hsBtn, false);
+    });
+    connect(hsBtn, &QPushButton::clicked, this, [this, outerStack, tcBtn, hsBtn, applyNavStyle]() {
+        animateStackSwitch(outerStack, 1);
+        animateButton(hsBtn);
+        tcBtn->setChecked(false);
+        hsBtn->setChecked(true);
+        applyNavStyle(tcBtn, false);
+        applyNavStyle(hsBtn, true);
+    });
+
     // Initial install check happens after the page is shown.
     refreshMultiplayerInstallState();
 
@@ -336,25 +389,35 @@ void MainWindow::installTerracottaCore()
 {
     const QString dir = terracottaDir();
     QDir().mkpath(dir);
-    const QString dest = dir + "/terracotta.exe";
 
-    QFile res(":/terracotta/terracotta.exe");
-    if (!res.exists() || !res.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, "联机", "内置联机核心资源缺失，无法安装。");
-        return;
-    }
-    QFile out(dest);
-    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // The core depends on the MSVC 2015+ runtime. Ship VCRUNTIME140.dll next to
+    // terracotta.exe so it also works on machines without the VC++ redistributable.
+    const QList<QPair<QString, QString>> files = {
+        { QStringLiteral(":/terracotta/terracotta.exe"), QStringLiteral("terracotta.exe") },
+        { QStringLiteral(":/terracotta/VCRUNTIME140.DLL"), QStringLiteral("VCRUNTIME140.dll") },
+    };
+
+    for (const auto &entry : files) {
+        QFile res(entry.first);
+        if (!res.exists() || !res.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(this, "联机",
+                QString("内置联机资源缺失: %1，无法安装。").arg(entry.first));
+            return;
+        }
+        const QString dest = dir + "/" + entry.second;
+        QFile out(dest);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            res.close();
+            QMessageBox::warning(this, "联机", QString("无法写入联机文件: %1").arg(dest));
+            return;
+        }
+        const QByteArray data = res.readAll();
         res.close();
-        QMessageBox::warning(this, "联机", QString("无法写入联机核心: %1").arg(dest));
-        return;
+        out.write(data);
+        out.close();
+        appendLog(QString("联机文件已释放到: %1 (%2 字节)").arg(dest).arg(data.size()));
     }
-    const QByteArray data = res.readAll();
-    res.close();
-    out.write(data);
-    out.close();
 
-    appendLog(QString("联机核心已释放到: %1 (%2 字节)").arg(dest).arg(data.size()));
     refreshMultiplayerInstallState();
 }
 
@@ -470,4 +533,323 @@ void MainWindow::applyWin7MultiplayerGuard()
         }
         appendLog("联机：用户选择在 Win7 上跳过联机功能（本会话已禁用联机标签页）。");
     });
+}
+
+// ============================================================================
+// 红石联机 (Hongshi) page
+// ============================================================================
+
+QString MainWindow::hongshiDir() const
+{
+    return HongshiClient::defaultDir(m_core.configStore()->configDir());
+}
+
+QWidget *MainWindow::buildHongshiPage(QWidget *parent)
+{
+    auto *page = new QWidget(parent);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(24, 20, 24, 20);
+    layout->setSpacing(16);
+
+    auto *headerRow = new QHBoxLayout();
+    auto *title = new QLabel("红石联机 (Hongshi)", page);
+    title->setStyleSheet("font-size: 20px; font-weight: 800; color: #111827;");
+    headerRow->addWidget(title);
+    headerRow->addStretch();
+    layout->addLayout(headerRow);
+
+    m_hsStack = new QStackedWidget(page);
+    layout->addWidget(m_hsStack, 1);
+
+    // --- Install page ---
+    m_hsInstallPage = new QWidget(m_hsStack);
+    auto *instLayout = new QVBoxLayout(m_hsInstallPage);
+    instLayout->setAlignment(Qt::AlignCenter);
+    auto *instCard = new QFrame(m_hsInstallPage);
+    instCard->setObjectName("hsInstallCard");
+    instCard->setStyleSheet("#hsInstallCard { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; }");
+    instCard->setFixedWidth(560);
+    auto *cardLayout = new QVBoxLayout(instCard);
+    cardLayout->setContentsMargins(28, 24, 28, 24);
+    cardLayout->setSpacing(16);
+    auto *instTitle = new QLabel("未安装红石联机内核", instCard);
+    instTitle->setStyleSheet("font-size: 18px; font-weight: 800; color: #111827;");
+    cardLayout->addWidget(instTitle);
+    auto *instDesc = new QLabel(
+        "红石联机内核 (hongshic) 需要从官方服务器下载，约 1 MB。\n"
+        "下载后会保存到启动器配置目录下的 hongshi 文件夹。",
+        instCard);
+    instDesc->setWordWrap(true);
+    instDesc->setStyleSheet("font-size: 13px; color: #4b5563;");
+    cardLayout->addWidget(instDesc);
+
+    auto *progressLabel = new QLabel(QString(), instCard);
+    progressLabel->setStyleSheet("font-size: 12px; color: #6b7280;");
+    cardLayout->addWidget(progressLabel);
+
+    auto *btnRow = new QHBoxLayout();
+    btnRow->addStretch();
+    auto *installBtn = new QPushButton("下载并安装", instCard);
+    installBtn->setCursor(Qt::PointingHandCursor);
+    installBtn->setFixedSize(140, 38);
+    installBtn->setStyleSheet(
+        "QPushButton { background: #2563eb; color: #fff; border: none; border-radius: 8px;"
+        "  font-size: 14px; font-weight: 700; }"
+        "QPushButton:hover { background: #1d4ed8; }"
+        "QPushButton:disabled { background: #9ca3af; }");
+    btnRow->addWidget(installBtn);
+    cardLayout->addLayout(btnRow);
+    instLayout->addWidget(instCard);
+    m_hsStack->addWidget(m_hsInstallPage);
+
+    connect(installBtn, &QPushButton::clicked, this, [this, installBtn, progressLabel]() {
+        installBtn->setEnabled(false);
+        progressLabel->setText("正在下载...");
+        if (!m_hongshi) {
+            m_hongshi = new HongshiClient(this);
+            connect(m_hongshi, &HongshiClient::logLine, this, [this](const QString &line) {
+                appendLog(line);
+            });
+        }
+        auto *dlConn = new QMetaObject::Connection();
+        *dlConn = connect(m_hongshi, &HongshiClient::downloadProgress, this,
+                          [progressLabel](qint64 rec, qint64 total) {
+            if (total > 0) {
+                progressLabel->setText(QString("正在下载... %1 / %2 KB")
+                    .arg(rec / 1024).arg(total / 1024));
+            } else {
+                progressLabel->setText(QString("正在下载... %1 KB").arg(rec / 1024));
+            }
+        });
+        auto *finConn = new QMetaObject::Connection();
+        *finConn = connect(m_hongshi, &HongshiClient::downloadFinished, this,
+                           [this, installBtn, progressLabel, dlConn, finConn](const QString &) {
+            disconnect(*dlConn); delete dlConn;
+            disconnect(*finConn); delete finConn;
+            installBtn->setEnabled(true);
+            progressLabel->setText(QString());
+            refreshHongshiInstallState();
+        });
+        auto *failConn = new QMetaObject::Connection();
+        *failConn = connect(m_hongshi, &HongshiClient::failed, this,
+                            [installBtn, progressLabel, dlConn, failConn](const QString &err) {
+            disconnect(*dlConn); delete dlConn;
+            disconnect(*failConn); delete failConn;
+            installBtn->setEnabled(true);
+            progressLabel->setText(QString("下载失败: %1").arg(err));
+        });
+        m_hongshi->ensureKernel(hongshiDir());
+    });
+
+    // --- Main page ---
+    m_hsMainPage = new QWidget(m_hsStack);
+    auto *mainLayout = new QVBoxLayout(m_hsMainPage);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(16);
+
+    auto *statusCard = new QFrame(m_hsMainPage);
+    statusCard->setObjectName("hsStatusCard");
+    statusCard->setStyleSheet("#hsStatusCard { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; }");
+    auto *statusLayout = new QVBoxLayout(statusCard);
+    statusLayout->setContentsMargins(22, 18, 22, 18);
+    statusLayout->setSpacing(8);
+    auto *statusTitle = new QLabel("当前状态", statusCard);
+    statusTitle->setStyleSheet("font-size: 13px; color: #6b7280;");
+    statusLayout->addWidget(statusTitle);
+    m_hsStatusLabel = new QLabel("未启动", statusCard);
+    m_hsStatusLabel->setStyleSheet("font-size: 18px; font-weight: 700; color: #111827;");
+    m_hsStatusLabel->setWordWrap(true);
+    statusLayout->addWidget(m_hsStatusLabel);
+    m_hsRelayLabel = new QLabel(QString(), statusCard);
+    m_hsRelayLabel->setStyleSheet("font-size: 12px; color: #6b7280;");
+    statusLayout->addWidget(m_hsRelayLabel);
+    mainLayout->addWidget(statusCard);
+
+    auto *endpointCard = new QFrame(m_hsMainPage);
+    endpointCard->setObjectName("hsEndpointCard");
+    endpointCard->setStyleSheet("#hsEndpointCard { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; }");
+    auto *epLayout = new QVBoxLayout(endpointCard);
+    epLayout->setContentsMargins(22, 18, 22, 18);
+    epLayout->setSpacing(10);
+    auto *epTitle = new QLabel("联机地址", endpointCard);
+    epTitle->setStyleSheet("font-size: 15px; font-weight: 700; color: #111827;");
+    epLayout->addWidget(epTitle);
+    auto *epDesc = new QLabel("把下面这个地址发给朋友，让他们在游戏的「直接连接」里输入即可。", endpointCard);
+    epDesc->setWordWrap(true);
+    epDesc->setStyleSheet("font-size: 12px; color: #6b7280;");
+    epLayout->addWidget(epDesc);
+
+    auto *epRow = new QHBoxLayout();
+    m_hsEndpointLabel = new QLabel(QStringLiteral("（尚未启动）"), endpointCard);
+    m_hsEndpointLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_hsEndpointLabel->setStyleSheet("font-size: 16px; font-weight: 700; color: #059669;");
+    epRow->addWidget(m_hsEndpointLabel, 1);
+    m_hsCopyButton = new QPushButton("复制", endpointCard);
+    m_hsCopyButton->setCursor(Qt::PointingHandCursor);
+    m_hsCopyButton->setFixedSize(80, 34);
+    m_hsCopyButton->setEnabled(false);
+    m_hsCopyButton->setStyleSheet(
+        "QPushButton { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db;"
+        "  border-radius: 8px; font-size: 13px; font-weight: 600; }"
+        "QPushButton:hover { background: #e5e7eb; }"
+        "QPushButton:disabled { color: #9ca3af; }");
+    epRow->addWidget(m_hsCopyButton);
+    epLayout->addLayout(epRow);
+    mainLayout->addWidget(endpointCard);
+
+    auto *actionRow = new QHBoxLayout();
+    // Game port input (defaults to 25565 when left empty).
+    auto *portRow = new QHBoxLayout();
+    auto *portLabel = new QLabel("游戏端口：", m_hsMainPage);
+    portLabel->setStyleSheet("font-size: 13px; color: #374151;");
+    portRow->addWidget(portLabel);
+    m_hsPortEdit = new QLineEdit(m_hsMainPage);
+    m_hsPortEdit->setPlaceholderText("25565");
+    m_hsPortEdit->setFixedWidth(120);
+    m_hsPortEdit->setStyleSheet(
+        "QLineEdit { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 8px;"
+        "  background: #f9fafb; font-size: 13px; }");
+    portRow->addWidget(m_hsPortEdit);
+    auto *portHint = new QLabel("留空则默认 25565", m_hsMainPage);
+    portHint->setStyleSheet("font-size: 12px; color: #9ca3af;");
+    portRow->addWidget(portHint);
+    portRow->addStretch();
+    mainLayout->addLayout(portRow);
+
+    m_hsStartButton = new QPushButton("创建联机房间", m_hsMainPage);
+    m_hsStartButton->setCursor(Qt::PointingHandCursor);
+    m_hsStartButton->setFixedHeight(40);
+    m_hsStartButton->setStyleSheet(
+        "QPushButton { background: #2563eb; color: #fff; border: none; border-radius: 8px;"
+        "  padding: 6px 24px; font-size: 14px; font-weight: 700; }"
+        "QPushButton:hover { background: #1d4ed8; }"
+        "QPushButton:disabled { background: #9ca3af; }");
+    actionRow->addWidget(m_hsStartButton);
+    m_hsStopButton = new QPushButton("结束房间", m_hsMainPage);
+    m_hsStopButton->setCursor(Qt::PointingHandCursor);
+    m_hsStopButton->setFixedHeight(40);
+    m_hsStopButton->setEnabled(false);
+    m_hsStopButton->setStyleSheet(
+        "QPushButton { background: #ffffff; color: #dc2626; border: 1px solid #dc2626;"
+        "  border-radius: 8px; padding: 6px 24px; font-size: 14px; font-weight: 700; }"
+        "QPushButton:hover { background: #fef2f2; }"
+        "QPushButton:disabled { color: #9ca3af; border-color: #d1d5db; }");
+    actionRow->addWidget(m_hsStopButton);
+    actionRow->addStretch();
+    mainLayout->addLayout(actionRow);
+
+    auto *hint = new QLabel(
+        "提示：内核不会主动连接游戏端口，可以先启动房间再进游戏。\n"
+        "同一台机器同时只能运行一个联机内核；房间结束后需要重新创建。",
+        m_hsMainPage);
+    hint->setWordWrap(true);
+    hint->setStyleSheet("font-size: 12px; color: #9ca3af;");
+    mainLayout->addWidget(hint);
+
+    mainLayout->addStretch();
+    m_hsStack->addWidget(m_hsMainPage);
+
+    connect(m_hsStartButton, &QPushButton::clicked, this, [this]() {
+        if (!m_hongshi) return;
+        if (m_hongshi->isReady()) {
+            m_hsStatusLabel->setText("房间已创建，等待朋友加入");
+            m_hsEndpointLabel->setText(m_hongshi->endpoint());
+            m_hsCopyButton->setEnabled(true);
+            m_hsStopButton->setEnabled(true);
+            m_hsStartButton->setEnabled(false);
+            return;
+        }
+        m_hsStartButton->setEnabled(false);
+        m_hsStatusLabel->setText("正在启动内核并申请隧道...");
+        m_hsEndpointLabel->setText(QStringLiteral("（等待中）"));
+        m_hsCopyButton->setEnabled(false);
+
+        auto *readyConn = new QMetaObject::Connection();
+        *readyConn = connect(m_hongshi, &HongshiClient::ready, this,
+                             [this, readyConn](const QString &endpoint) {
+            disconnect(*readyConn); delete readyConn;
+            m_hsStatusLabel->setText("房间已创建，等待朋友加入");
+            m_hsEndpointLabel->setText(endpoint);
+            m_hsCopyButton->setEnabled(true);
+            m_hsStopButton->setEnabled(true);
+            m_hsRelayLabel->setText(QStringLiteral("当前中继: %1").arg(m_hongshi->currentRelay()));
+        });
+        auto *failConn = new QMetaObject::Connection();
+        *failConn = connect(m_hongshi, &HongshiClient::failed, this,
+                            [this, readyConn, failConn](const QString &err) {
+            disconnect(*readyConn); delete readyConn;
+            disconnect(*failConn); delete failConn;
+            m_hsStartButton->setEnabled(true);
+            m_hsStatusLabel->setText(QString("启动失败: %1").arg(err));
+            m_hsEndpointLabel->setText(QStringLiteral("（尚未启动）"));
+            m_hsCopyButton->setEnabled(false);
+        });
+        int port = 25565;
+        if (m_hsPortEdit) {
+            bool ok = false;
+            const int typed = m_hsPortEdit->text().trimmed().toInt(&ok);
+            if (ok && typed > 0 && typed <= 65535) port = typed;
+        }
+        m_hongshi->start(QString(), port);
+    });
+
+    connect(m_hsStopButton, &QPushButton::clicked, this, [this]() {
+        if (m_hongshi) m_hongshi->stop();
+        m_hsStatusLabel->setText("未启动");
+        m_hsEndpointLabel->setText(QStringLiteral("（尚未启动）"));
+        m_hsRelayLabel->setText(QString());
+        m_hsCopyButton->setEnabled(false);
+        m_hsStopButton->setEnabled(false);
+        m_hsStartButton->setEnabled(true);
+    });
+
+    connect(m_hsCopyButton, &QPushButton::clicked, this, [this]() {
+        if (m_hsEndpointLabel) {
+            QGuiApplication::clipboard()->setText(m_hsEndpointLabel->text());
+            appendLog(QString("红石联机：已复制地址 %1").arg(m_hsEndpointLabel->text()));
+        }
+    });
+
+    refreshHongshiInstallState();
+    return page;
+}
+
+void MainWindow::refreshHongshiInstallState()
+{
+    if (!m_hsStack) return;
+
+    if (!m_hongshi) {
+        m_hongshi = new HongshiClient(this);
+        connect(m_hongshi, &HongshiClient::logLine, this, [this](const QString &line) {
+            appendLog(line);
+        });
+        connect(m_hongshi, &HongshiClient::processExited, this, [this](int code) {
+            if (!m_hsStatusLabel) return;
+            if (code == 0) {
+                m_hsStatusLabel->setText("房间已结束（进程退出）");
+            }
+            if (m_hsEndpointLabel) m_hsEndpointLabel->setText(QStringLiteral("（尚未启动）"));
+            if (m_hsCopyButton) m_hsCopyButton->setEnabled(false);
+            if (m_hsStopButton) m_hsStopButton->setEnabled(false);
+            if (m_hsStartButton) m_hsStartButton->setEnabled(true);
+        });
+    }
+
+    const QString exePath = hongshiDir() + "/" + HongshiClient::executableName();
+    const bool installed = QFileInfo::exists(exePath) && QFileInfo(exePath).size() > 0;
+    m_hongshi->setExecutable(exePath);
+
+    if (!installed) {
+        m_hsStack->setCurrentWidget(m_hsInstallPage);
+        return;
+    }
+
+    m_hsStack->setCurrentWidget(m_hsMainPage);
+    m_hongshi->fetchRelays();
+}
+
+void MainWindow::installHongshiCore()
+{
+    if (!m_hongshi) return;
+    m_hongshi->ensureKernel(hongshiDir());
 }

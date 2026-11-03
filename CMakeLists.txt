@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Kill VERSION 2.1 LANGUAGES CXX RC)
+project(Kill VERSION 2.2 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +68,8 @@ set(KILL_SOURCES
     src/multiplayer_tab.cpp
     src/terracotta_client.h
     src/terracotta_client.cpp
+    src/hongshi_client.h
+    src/hongshi_client.cpp
     src/forge_manual_installer.h
     src/forge_manual_installer.cpp
     src/plugin_ui_apply.cpp

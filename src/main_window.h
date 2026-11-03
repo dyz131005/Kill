@@ -36,6 +36,7 @@ class QNetworkReply;
 class QCloseEvent;
 class QShowEvent;
 class TerracottaClient;
+class HongshiClient;
 
 class MainWindow : public QMainWindow
 {
@@ -64,6 +65,7 @@ private:
     QWidget *buildSettingsTab();
     QWidget *buildLogsTab();
     QWidget *buildPluginsTab();
+    QWidget *buildHongshiPage(QWidget *parent);
     QWidget *buildMultiplayerTab();
     void applyWin7MultiplayerGuard();
     static bool isWindows7OrBelow();
@@ -173,6 +175,23 @@ private:
     void refreshMultiplayerInstallState();
     void installTerracottaCore();
     void onTerracottaState(const QJsonObject &state);
+
+    // --- 红石联机 (Hongshi) ---
+    QStackedWidget *m_mpOuterStack = nullptr;
+    QStackedWidget *m_hsStack = nullptr;
+    QWidget *m_hsInstallPage = nullptr;
+    QWidget *m_hsMainPage = nullptr;
+    QLabel *m_hsStatusLabel = nullptr;
+    QLabel *m_hsEndpointLabel = nullptr;
+    QPushButton *m_hsStartButton = nullptr;
+    QPushButton *m_hsStopButton = nullptr;
+    QPushButton *m_hsCopyButton = nullptr;
+    QLabel *m_hsRelayLabel = nullptr;
+    QLineEdit *m_hsPortEdit = nullptr;
+    HongshiClient *m_hongshi = nullptr;
+    QString hongshiDir() const;
+    void refreshHongshiInstallState();
+    void installHongshiCore();
     QWidget *m_aboutPage = nullptr;
     QPushButton *m_aboutBackButton = nullptr;
     QPushButton *m_aboutEntryButton = nullptr;

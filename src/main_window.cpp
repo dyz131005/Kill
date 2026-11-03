@@ -3309,7 +3309,7 @@ QWidget *MainWindow::buildAboutPage()
     appNameLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #111827;");
     infoLayout->addRow("程序名称：", appNameLabel);
 
-    auto *versionLabel = new QLabel("2.1", infoBox);
+    auto *versionLabel = new QLabel("2.2", infoBox);
     versionLabel->setStyleSheet("font-size: 14px; color: #111827;");
     infoLayout->addRow("当前版本：", versionLabel);
 
@@ -3322,7 +3322,7 @@ QWidget *MainWindow::buildAboutPage()
     repoRowLayout->setContentsMargins(0, 0, 0, 0);
     repoRowLayout->setSpacing(10);
 
-    auto *repoLabel = new QLabel("https://github.com/dyz131005/", repoRow);
+    auto *repoLabel = new QLabel("https://github.com/dyz131005/Kill", repoRow);
     repoLabel->setStyleSheet("font-size: 14px; color: #2563eb;");
     repoLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     auto *openRepoButton = new QPushButton("打开 GitHub 仓库", repoRow);
@@ -3346,7 +3346,7 @@ QWidget *MainWindow::buildAboutPage()
     );
     connect(openRepoButton, &QPushButton::clicked, this, [openRepoButton, this] {
         animateButton(openRepoButton);
-        QDesktopServices::openUrl(QUrl("https://github.com/dyz131005/"));
+        QDesktopServices::openUrl(QUrl("https://github.com/dyz131005/Kill"));
     });
 
     repoRowLayout->addWidget(repoLabel, 1);

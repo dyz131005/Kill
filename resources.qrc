@@ -31,5 +31,6 @@
         <file>assets/version-icons/cleanroom.png</file>
         <file>assets/version-icons/cleanroom@2x.png</file>
         <file>terracotta/terracotta.exe</file>
+        <file>terracotta/VCRUNTIME140.DLL</file>
     </qresource>
 </RCC>
